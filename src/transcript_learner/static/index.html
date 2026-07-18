@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>German Transcript Learner</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🎧 German Transcript Learner</h1>
+    <div id="status-bar">
+      <span id="conn-dot" class="dot" title="connection"></span>
+      <span id="status-text">connecting…</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="controls">
+      <button id="start-btn" class="primary">● Start recording</button>
+      <button id="stop-btn" class="danger" disabled>■ Stop</button>
+      <button id="end-btn" disabled>Finish session → analyze</button>
+      <span id="counter" class="counter">0 unique words</span>
+    </section>
+
+    <div id="warnings"></div>
+
+    <section id="live">
+      <div id="transcript-pane" class="pane">
+        <h2>Live transcript</h2>
+        <div id="transcript"></div>
+        <div id="partial" class="partial"></div>
+      </div>
+
+      <div id="words-pane" class="pane">
+        <h2>Unique words <span id="words-count" class="badge">0</span></h2>
+        <div id="words"></div>
+      </div>
+    </section>
+
+    <!-- End-of-session analysis -->
+    <section id="analysis" class="hidden">
+      <h2>Finish session</h2>
+      <p class="hint">
+        Paste the words you already know (normalized / dictionary form).
+        Separate by commas, spaces or new lines. They are matched exactly,
+        then by lemma, then the rest is judged by the AI model.
+      </p>
+      <textarea id="known-words" rows="6"
+        placeholder="der, Hund, spielen, groß, Haus, gehen, ..."></textarea>
+      <div class="row">
+        <button id="analyze-btn" class="primary">Analyze &amp; build learning list</button>
+        <span id="analyze-status"></span>
+      </div>
+    </section>
+
+    <section id="results" class="hidden">
+      <h2>Words worth learning <span id="learn-count" class="badge"></span></h2>
+      <div id="summary" class="summary"></div>
+      <div class="row">
+        <button id="download-btn">⬇ Download JSON</button>
+        <span id="saved-path" class="hint"></span>
+      </div>
+      <div id="learn-list"></div>
+      <details id="rejected-details">
+        <summary>Filtered out (already known / rejected by AI)</summary>
+        <div id="rejected-list"></div>
+      </details>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
