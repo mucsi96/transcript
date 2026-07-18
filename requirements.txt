@@ -8,7 +8,7 @@ sounddevice>=0.4.7
 numpy>=1.26
 
 # Speech-to-text (Speechmatics real-time)
-speechmatics-python>=1.14
+speechmatics-rt>=1.1
 
 # AI word filtering (GPT-5 via OpenAI)
 openai>=1.60

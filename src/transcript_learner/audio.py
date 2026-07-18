@@ -16,9 +16,9 @@ CHANNELS = 1
 class AudioStream:
     """A blocking, `read(n)`-style byte stream fed by a sounddevice callback.
 
-    Speechmatics' WebsocketClient pulls audio by calling ``read(n)`` until it
-    returns an empty bytes object, so we buffer callback frames in a queue and
-    hand them out on demand.
+    The speechmatics-rt client pulls audio by calling ``read(n)`` (in a thread
+    executor) until it returns an empty bytes object, so we buffer callback
+    frames in a queue and hand them out on demand.
     """
 
     def __init__(self, sample_rate: int, device=None):
