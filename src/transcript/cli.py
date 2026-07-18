@@ -17,18 +17,20 @@ from .config import DEFAULT_EXCLUDE_ENT_TYPES, DEFAULT_EXCLUDE_POS, FilterConfig
 
 
 def _add_extract(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("extract", help="Rip DVD audio to FLAC with VLC")
-    p.add_argument("--dvd", required=True,
-                   help="DVD source: /dev/sr0, Windows drive letter (D:), ISO file, or VIDEO_TS dir")
-    p.add_argument("--title", type=int, default=1, help="DVD title number (default: 1)")
-    p.add_argument("--audio-language", help="preferred audio language, ISO 639-2 code (e.g. deu)")
-    p.add_argument("--audio-track", type=int, help="audio track index (fallback when language is ambiguous)")
+    p = sub.add_parser("extract", help="Extract audio from a MakeMKV rip (.mkv) to FLAC with ffmpeg")
+    p.add_argument("source", type=Path,
+                   help="video file ripped with MakeMKV, e.g. /mnt/c/Users/you/Videos/movie.mkv")
+    p.add_argument("--list-tracks", action="store_true",
+                   help="list the audio tracks (language, codec, channels) and exit")
+    p.add_argument("--audio-language",
+                   help="pick the audio stream by language tag (DVD rips usually tag German as 'ger')")
+    p.add_argument("--audio-track", type=int,
+                   help="pick the audio stream by index among audio streams, 0-based (see --list-tracks)")
     p.add_argument("--sample-rate", type=int, default=16000)
     p.add_argument("--channels", type=int, default=1)
-    p.add_argument("--vlc-binary", default="cvlc",
-                   help='VLC binary (default: cvlc; on WSL e.g. "/mnt/c/Program Files/VideoLAN/VLC/vlc.exe")')
+    p.add_argument("--ffmpeg-binary", default="ffmpeg")
     p.add_argument("-o", "--output", type=Path, default=Path("work/movie.flac"))
-    p.add_argument("--dry-run", action="store_true", help="print the VLC command without running it")
+    p.add_argument("--dry-run", action="store_true", help="print the ffmpeg command without running it")
 
 
 def _add_transcribe(sub: argparse._SubParsersAction) -> None:
@@ -121,17 +123,22 @@ def filter_config_from_args(args: argparse.Namespace) -> FilterConfig:
 
 
 def _cmd_extract(args: argparse.Namespace) -> None:
-    from .extract import extract_audio
+    from .extract import extract_audio, format_tracks, list_audio_tracks
+
+    if args.list_tracks:
+        tracks = list_audio_tracks(args.source)
+        print(f"Audio tracks in {args.source}:")
+        print(format_tracks(tracks))
+        return
 
     extract_audio(
-        args.dvd,
-        args.title,
+        args.source,
         args.output,
         audio_track=args.audio_track,
         audio_language=args.audio_language,
         sample_rate=args.sample_rate,
         channels=args.channels,
-        vlc_binary=args.vlc_binary,
+        ffmpeg_binary=args.ffmpeg_binary,
         dry_run=args.dry_run,
     )
 

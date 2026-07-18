@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "transcript"
 version = "0.1.0"
-description = "Extract German vocabulary from a DVD movie: VLC -> FLAC -> Whisper large-v3 -> spaCy -> flash-card word list"
+description = "Extract German vocabulary from a DVD movie: MakeMKV/ffmpeg -> FLAC -> Whisper large-v3 -> spaCy -> flash-card word list"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"

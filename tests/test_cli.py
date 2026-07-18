@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from transcript.cli import build_parser, filter_config_from_args
-from transcript.extract import build_dvd_mrl, build_vlc_command, is_windows_binary
+from transcript.extract import build_ffmpeg_command, format_tracks, parse_ffprobe_streams
 
 
 def parse(*argv):
@@ -10,15 +10,20 @@ def parse(*argv):
 
 def test_extract_args():
     args = parse(
-        "extract", "--dvd", "/dev/sr0", "--title", "2",
-        "--audio-language", "deu", "-o", "out.flac",
+        "extract", "/mnt/c/Videos/movie.mkv",
+        "--audio-language", "ger", "-o", "out.flac",
     )
     assert args.command == "extract"
-    assert args.dvd == "/dev/sr0"
-    assert args.title == 2
-    assert args.audio_language == "deu"
+    assert args.source == Path("/mnt/c/Videos/movie.mkv")
+    assert args.audio_language == "ger"
     assert args.output == Path("out.flac")
-    assert args.vlc_binary == "cvlc"
+    assert args.ffmpeg_binary == "ffmpeg"
+    assert not args.list_tracks
+
+
+def test_extract_list_tracks_flag():
+    args = parse("extract", "movie.mkv", "--list-tracks")
+    assert args.list_tracks
 
 
 def test_transcribe_defaults():
@@ -56,41 +61,59 @@ def test_run_accepts_all_stage_options():
     assert args.known_words == Path("known.txt")
 
 
-def test_build_dvd_mrl_linux_device():
-    assert build_dvd_mrl("/dev/sr0", 1) == "dvdsimple:///dev/sr0#1"
-
-
-def test_build_dvd_mrl_windows_drive_letter():
-    assert build_dvd_mrl("D:", 1) == "dvdsimple://D:\\#1"
-
-
-def test_build_dvd_mrl_with_chapter_and_iso():
-    assert build_dvd_mrl("/data/movie.iso", 2, 3) == "dvdsimple:///data/movie.iso#2:3"
-
-
-def test_is_windows_binary():
-    assert is_windows_binary("/mnt/c/Program Files/VideoLAN/VLC/vlc.exe")
-    assert not is_windows_binary("cvlc")
-
-
-def test_build_vlc_command_exact_argv():
-    cmd = build_vlc_command(
-        "/dev/sr0", 1, "work/movie.flac",
-        audio_language="deu", sample_rate=16000, channels=1,
+def test_build_ffmpeg_command_by_language_exact_argv():
+    cmd = build_ffmpeg_command(
+        "movie.mkv", "work/movie.flac",
+        audio_language="ger", sample_rate=16000, channels=1,
     )
     assert cmd == [
-        "cvlc",
-        "--intf", "dummy",
-        "--no-video",
-        "dvdsimple:///dev/sr0#1",
-        "--audio-language=deu",
-        "--sout=#transcode{acodec=flac,channels=1,samplerate=16000}"
-        ":std{access=file,mux=raw,dst=work/movie.flac}",
-        "vlc://quit",
+        "ffmpeg", "-hide_banner", "-nostdin", "-y",
+        "-i", "movie.mkv",
+        "-map", "0:a:m:language:ger",
+        "-vn", "-sn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-c:a", "flac",
+        "work/movie.flac",
     ]
 
 
-def test_build_vlc_command_audio_track_fallback():
-    cmd = build_vlc_command("/dev/sr0", 1, "out.flac", audio_track=2)
-    assert "--audio-track=2" in cmd
-    assert not any(a.startswith("--audio-language") for a in cmd)
+def test_build_ffmpeg_command_by_track_index():
+    cmd = build_ffmpeg_command("movie.mkv", "out.flac", audio_track=2)
+    assert cmd[cmd.index("-map") + 1] == "0:a:2"
+
+
+def test_build_ffmpeg_command_defaults_to_first_audio_stream():
+    cmd = build_ffmpeg_command("movie.mkv", "out.flac")
+    assert cmd[cmd.index("-map") + 1] == "0:a:0"
+
+
+def test_build_ffmpeg_command_language_wins_over_track():
+    cmd = build_ffmpeg_command("movie.mkv", "out.flac", audio_track=1, audio_language="ger")
+    assert cmd[cmd.index("-map") + 1] == "0:a:m:language:ger"
+
+
+def test_parse_ffprobe_streams():
+    payload = {
+        "streams": [
+            {"codec_name": "ac3", "channels": 6, "tags": {"language": "ger", "title": "Surround 5.1"}},
+            {"codec_name": "ac3", "channels": 2, "tags": {"language": "eng"}},
+            {"codec_name": "mp2", "channels": 2},
+        ]
+    }
+    tracks = parse_ffprobe_streams(payload)
+    assert tracks == [
+        {"track": 0, "codec": "ac3", "channels": 6, "language": "ger", "title": "Surround 5.1"},
+        {"track": 1, "codec": "ac3", "channels": 2, "language": "eng", "title": ""},
+        {"track": 2, "codec": "mp2", "channels": 2, "language": "und", "title": ""},
+    ]
+
+
+def test_format_tracks():
+    tracks = parse_ffprobe_streams(
+        {"streams": [{"codec_name": "ac3", "channels": 6, "tags": {"language": "ger"}}]}
+    )
+    out = format_tracks(tracks)
+    assert "--audio-track 0" in out
+    assert "language=ger" in out
+    assert format_tracks([]) == "  no audio streams found"

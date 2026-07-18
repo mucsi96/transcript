@@ -6,7 +6,8 @@ can learn the words as flash cards first.
 Pipeline stages, each resumable through a JSON/FLAC artifact in `work/`:
 
 ```
-DVD ──[extract: VLC]──────────────> work/movie.flac        (16 kHz mono FLAC)
+DVD ──[MakeMKV on Windows]────────> movie.mkv              (rip main title, keep German audio)
+    ──[extract: ffmpeg]───────────> work/movie.flac        (16 kHz mono FLAC)
     ──[transcribe: faster-whisper]─> work/transcript.json  (Whisper large-v3, German)
     ──[analyze: spaCy]─────────────> work/analysis.json    (sentences, lemmas, POS, NER)
     ──[build: match + filter]──────> work/words.json       (words to learn + example sentences)
@@ -21,14 +22,17 @@ regenerate.
 nix develop
 ```
 
-That is all: the dev shell provides Python 3.11, VLC (with libdvdcss), and
-`lsdvd`, then on first entry creates a `.venv`, runs `pip install -e ".[dev]"`
-(faster-whisper, spaCy, pytest), and downloads the `de_core_news_lg` German
-spaCy model (~570 MB). Later entries just activate the existing venv. Nix
-provides the system pieces; Python packages stay in the venv because
-faster-whisper and the spaCy German models don't package cleanly in nixpkgs.
+That is all: the dev shell provides Python 3.11 and ffmpeg, then on first
+entry creates a `.venv`, runs `pip install -e ".[dev]"` (faster-whisper,
+spaCy, pytest), and downloads the `de_core_news_lg` German spaCy model
+(~570 MB). Later entries just activate the existing venv. Nix provides the
+system pieces; Python packages stay in the venv because faster-whisper and
+the spaCy German models don't package cleanly in nixpkgs.
 
-Without Nix: install VLC and Python ≥ 3.10 yourself, then in a venv run
+On the Windows side you need [MakeMKV](https://www.makemkv.com/) for the
+DVD rip itself.
+
+Without Nix: install ffmpeg and Python ≥ 3.10 yourself, then in a venv run
 `pip install -e ".[dev]"` and `python -m spacy download de_core_news_lg`.
 
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
@@ -36,42 +40,39 @@ The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
 + cuDNN 9); otherwise it falls back to CPU int8 automatically — expect
 roughly real-time speed on a modern CPU for a feature film.
 
-## Stage 1 — DVD → FLAC
+## Stage 1 — DVD → MKV → FLAC
 
-WSL2 does not pass the optical drive through (there is no `/dev/sr0`), so on
-WSL use the **Windows** VLC against the Windows drive letter:
+WSL2 does not pass the optical drive through, and player-based ripping is
+unreliable, so the disc is ripped on **Windows with MakeMKV**:
 
-```bash
-transcript extract --dvd "D:" --title 1 --audio-language deu \
-    --vlc-binary "/mnt/c/Program Files/VideoLAN/VLC/vlc.exe" \
-    -o work/movie.flac
-```
+1. Open MakeMKV, insert the DVD, and rip the **main title** (usually the
+   longest one). In the title's tree you can untick everything except the
+   German audio track to keep the file small.
+2. Note where the `.mkv` lands, e.g. `C:\Users\you\Videos\movie.mkv` — from
+   WSL that is `/mnt/c/Users/you/Videos/movie.mkv`.
 
-The output path is converted with `wslpath -w` automatically so `vlc.exe`
-can write it. Writing into the Linux filesystem goes through the `\\wsl$`
-share; if that is slow, output to `/mnt/c/...` instead.
-
-On native Linux (or with an ISO ripped beforehand, which also works on WSL
-with the Nix-shell VLC):
+Then, inside the Nix shell in WSL, pull the audio out with ffmpeg:
 
 ```bash
-transcript extract --dvd /dev/sr0 --title 1 --audio-language deu -o work/movie.flac
-transcript extract --dvd /path/to/movie.iso --title 1 -o work/movie.flac
+# see which audio tracks the rip contains (language, codec, channels)
+transcript extract /mnt/c/Users/you/Videos/movie.mkv --list-tracks
+
+# extract the German track to 16 kHz mono FLAC
+transcript extract /mnt/c/Users/you/Videos/movie.mkv \
+    --audio-language ger -o work/movie.flac
 ```
 
 Options:
 
-- `--title N` — DVD title number. Find it with `lsdvd /dev/sr0` (in the Nix
-  shell) or by opening the disc in the VLC GUI; the longest title is almost
-  always the main feature.
-- `--audio-language deu` — pick the audio track by ISO 639-2 language code.
-  Use `--audio-track N` instead when the disc has several German tracks
-  (e.g. a director's commentary).
-- `--dry-run` — print the VLC command without running it.
+- `--audio-language ger` — pick the audio stream by its language tag. DVD
+  rips usually tag German as `ger` (ISO 639-2/B); check with
+  `--list-tracks`. Use `--audio-track N` instead when the rip has several
+  German tracks (e.g. a director's commentary) or missing language tags.
+  With neither option the first audio stream is used.
+- `--dry-run` — print the ffmpeg command without running it.
 - Output is 16 kHz mono FLAC: exactly what Whisper consumes, no ASR quality
   loss, and far smaller than the original AC3.
 
-Encrypted DVDs need `libdvdcss` (included with the Nix/Windows VLC builds).
 Whether ripping a CSS-protected disc is legal depends on your jurisdiction —
 use this only on discs you own, for personal study.
 
@@ -157,7 +158,7 @@ Ideas for further filtering (extension points, not implemented — see
 ## Development
 
 ```bash
-pytest          # unit tests; no DVD, VLC, Whisper model or spaCy model needed
+pytest          # unit tests; no DVD, ffmpeg, Whisper model or spaCy model needed
 ```
 
 The spaCy-dependent smoke test auto-skips when `de_core_news_lg` is not

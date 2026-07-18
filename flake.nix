@@ -1,5 +1,5 @@
 {
-  description = "German DVD vocabulary extraction pipeline (VLC -> faster-whisper -> spaCy)";
+  description = "German DVD vocabulary extraction pipeline (MakeMKV/ffmpeg -> faster-whisper -> spaCy)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -13,16 +13,14 @@
         python = pkgs.python311;
       in
       {
-        # Hybrid setup: Nix provides the system dependencies (Python, VLC
-        # with libdvdcss, lsdvd); the Python dependencies live in a pip venv
-        # because faster-whisper and the spaCy German models don't package
-        # cleanly in nixpkgs.
+        # Hybrid setup: Nix provides the system dependencies (Python,
+        # ffmpeg); the Python dependencies live in a pip venv because
+        # faster-whisper and the spaCy German models don't package cleanly
+        # in nixpkgs.
         devShells.default = pkgs.mkShell {
           packages = [
             python
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-            pkgs.vlc    # includes libdvdcss for encrypted DVDs
-            pkgs.lsdvd  # list DVD titles: lsdvd /dev/sr0
+            pkgs.ffmpeg  # audio extraction from MakeMKV rips (ffmpeg + ffprobe)
           ];
 
           # Manylinux wheels (ctranslate2, PyAV) need libstdc++/zlib from the
@@ -38,9 +36,9 @@
               ${python.interpreter} -m venv .venv
             fi
             source .venv/bin/activate
-            if ! pip show transcript >/dev/null 2>&1; then
+            if ! python -m pip show transcript >/dev/null 2>&1; then
               echo "Installing Python dependencies (first run only) ..."
-              pip install -e ".[dev]"
+              python -m pip install -e ".[dev]"
             fi
             if ! python -c "import de_core_news_lg" >/dev/null 2>&1; then
               echo "Downloading spaCy model de_core_news_lg (~570 MB, first run only) ..."
