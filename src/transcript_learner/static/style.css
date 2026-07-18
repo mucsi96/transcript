@@ -97,7 +97,8 @@ button.danger { background: transparent; border-color: var(--red); color: var(--
   max-height: 60vh;
   overflow-y: auto;
 }
-.pane h2 { margin: 0 0 10px; font-size: .95rem; color: var(--muted); font-weight: 600; }
+.pane h2 { margin: 0 0 4px; font-size: .95rem; color: var(--muted); font-weight: 600; }
+.pane-sub { margin: 0 0 12px; font-size: .78rem; color: var(--muted); opacity: .8; }
 
 #transcript p { margin: 0 0 8px; }
 .partial { color: var(--muted); font-style: italic; min-height: 1.2em; }
@@ -116,6 +117,7 @@ button.danger { background: transparent; border-color: var(--red); color: var(--
 .word-item .w { font-weight: 600; }
 .word-item .w .cnt { color: var(--muted); font-weight: 400; font-size: .78rem; margin-left: 6px; }
 .word-item .ctx { color: var(--muted); font-size: .8rem; }
+.word-item .ctx strong { color: var(--text); font-weight: 700; }
 
 #analysis, #results {
   margin-top: 22px;

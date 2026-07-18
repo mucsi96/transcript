@@ -68,25 +68,36 @@ class AppState:
             return {"ok": True, "message": "Not recording."}
         if self.transcriber is not None:
             self.transcriber.stop()
+        # Flush any trailing words still in the sentence buffer.
+        completed, new_entries = self.session.flush()
+        self._emit_transcript(completed, new_entries)
         self.recording = False
         return {"ok": True, "message": "Recording stopped."}
 
+    def _emit_transcript(self, sentences: list[str], new_entries: list) -> None:
+        if not sentences and not new_entries:
+            return
+        self.events.put(
+            {
+                "type": "transcript",
+                "sentences": sentences,
+                "new_words": [
+                    {"word": e.word, "surface": e.surface, "context": e.context}
+                    for e in new_entries
+                ],
+                "stats": {"unique_words": len(self.session.words)},
+            }
+        )
+
     def _on_transcriber_event(self, event: dict) -> None:
         """Called from the Speechmatics thread — keep it thread-safe & cheap."""
-        if event.get("type") == "final":
-            new_entries = self.session.add_final(event.get("text", ""), event.get("words", []))
-            self.events.put(
-                {
-                    "type": "final",
-                    "text": event.get("text", ""),
-                    "new_words": [
-                        {"word": e.word, "surface": e.surface, "context": e.context}
-                        for e in new_entries
-                    ],
-                    "stats": {"unique_words": len(self.session.words)},
-                }
+        kind = event.get("type")
+        if kind == "final":
+            completed, new_entries = self.session.add_final(
+                event.get("text", ""), event.get("words", [])
             )
-        elif event.get("type") == "partial":
+            self._emit_transcript(completed, new_entries)
+        elif kind == "partial":
             self.events.put({"type": "partial", "text": event.get("text", "")})
         else:  # info / error
             self.events.put(event)

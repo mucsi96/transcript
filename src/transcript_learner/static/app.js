@@ -59,9 +59,9 @@ function handleEvent(msg) {
     case "partial":
       el.partial.textContent = msg.text;
       break;
-    case "final":
+    case "transcript":
       el.partial.textContent = "";
-      if (msg.text) appendTranscript(msg.text);
+      (msg.sentences || []).forEach(appendTranscript);
       (msg.new_words || []).forEach(addWord);
       if (msg.stats) setCount(msg.stats.unique_words);
       break;
@@ -77,11 +77,17 @@ function handleEvent(msg) {
 function renderSnapshot(session) {
   if (!session) return;
   setCount(session.unique_words || 0);
+  el.transcript.innerHTML = "";
+  (session.transcript || []).forEach(appendTranscript);
   el.words.innerHTML = "";
   seenWords.clear();
-  (session.words || []).forEach((w) =>
-    addWord({ word: w.word, surface: w.surface, context: w.context, count: w.count })
-  );
+  // words come sorted by frequency; render so highest-frequency ends on top
+  (session.words || [])
+    .slice()
+    .reverse()
+    .forEach((w) =>
+      addWord({ word: w.word, surface: w.surface, context: w.context, count: w.count })
+    );
 }
 
 function appendTranscript(text) {
@@ -100,8 +106,17 @@ function addWord(w) {
     <div class="w">${escapeHtml(w.surface || w.word)}${
       w.count ? `<span class="cnt">×${w.count}</span>` : ""
     }</div>
-    <div class="ctx">${escapeHtml(w.context || "")}</div>`;
+    <div class="ctx">${highlight(w.context || "", w.surface || w.word)}</div>`;
   el.words.prepend(item);
+}
+
+// Escape a sentence for HTML, then bold the first occurrence of the word.
+function highlight(context, surface) {
+  const safe = escapeHtml(context);
+  const token = escapeHtml(surface);
+  if (!token) return safe;
+  const re = new RegExp(`(${token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "i");
+  return safe.replace(re, "<strong>$1</strong>");
 }
 
 function setCount(n) {
