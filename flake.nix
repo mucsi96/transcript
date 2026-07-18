@@ -38,10 +38,13 @@
               ${python.interpreter} -m venv .venv
             fi
             source .venv/bin/activate
-            if ! python -c "import transcript" >/dev/null 2>&1; then
-              echo 'Next steps:'
-              echo '  pip install -e ".[dev]"'
-              echo '  python -m spacy download de_core_news_lg'
+            if ! pip show transcript >/dev/null 2>&1; then
+              echo "Installing Python dependencies (first run only) ..."
+              pip install -e ".[dev]"
+            fi
+            if ! python -c "import de_core_news_lg" >/dev/null 2>&1; then
+              echo "Downloading spaCy model de_core_news_lg (~570 MB, first run only) ..."
+              python -m spacy download de_core_news_lg
             fi
           '';
         };

@@ -18,17 +18,18 @@ regenerate.
 ## Setup (WSL2 + Nix flakes)
 
 ```bash
-nix develop                                # Python 3.11, VLC (with libdvdcss), lsdvd
-pip install -e ".[dev]"                    # faster-whisper, spaCy, pytest (into .venv)
-python -m spacy download de_core_news_lg   # German spaCy model (~570 MB)
+nix develop
 ```
 
-The dev shell creates and activates a `.venv` automatically. Nix provides the
-system pieces; Python packages stay in the venv because faster-whisper and
-the spaCy German models don't package cleanly in nixpkgs.
+That is all: the dev shell provides Python 3.11, VLC (with libdvdcss), and
+`lsdvd`, then on first entry creates a `.venv`, runs `pip install -e ".[dev]"`
+(faster-whisper, spaCy, pytest), and downloads the `de_core_news_lg` German
+spaCy model (~570 MB). Later entries just activate the existing venv. Nix
+provides the system pieces; Python packages stay in the venv because
+faster-whisper and the spaCy German models don't package cleanly in nixpkgs.
 
-Without Nix: install VLC and Python ≥ 3.10 yourself, then run the same `pip`
-and `spacy download` commands in a venv.
+Without Nix: install VLC and Python ≥ 3.10 yourself, then in a venv run
+`pip install -e ".[dev]"` and `python -m spacy download de_core_news_lg`.
 
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
 `~/.cache/huggingface`. With an NVIDIA GPU it runs in float16 (needs CUDA 12
