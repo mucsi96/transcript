@@ -1,0 +1,221 @@
+"""Command-line interface.
+
+Subcommands mirror the pipeline stages; each reads/writes a JSON artifact in
+the work directory and skips itself if its output already exists (--force to
+redo). `run` chains transcribe -> analyze -> build starting from an audio
+file — DVD ripping stays a separate step since it needs the physical disc.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+from .config import DEFAULT_EXCLUDE_ENT_TYPES, DEFAULT_EXCLUDE_POS, FilterConfig
+
+
+def _add_extract(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("extract", help="Rip DVD audio to FLAC with VLC")
+    p.add_argument("--dvd", required=True,
+                   help="DVD source: /dev/sr0, Windows drive letter (D:), ISO file, or VIDEO_TS dir")
+    p.add_argument("--title", type=int, default=1, help="DVD title number (default: 1)")
+    p.add_argument("--audio-language", help="preferred audio language, ISO 639-2 code (e.g. deu)")
+    p.add_argument("--audio-track", type=int, help="audio track index (fallback when language is ambiguous)")
+    p.add_argument("--sample-rate", type=int, default=16000)
+    p.add_argument("--channels", type=int, default=1)
+    p.add_argument("--vlc-binary", default="cvlc",
+                   help='VLC binary (default: cvlc; on WSL e.g. "/mnt/c/Program Files/VideoLAN/VLC/vlc.exe")')
+    p.add_argument("-o", "--output", type=Path, default=Path("work/movie.flac"))
+    p.add_argument("--dry-run", action="store_true", help="print the VLC command without running it")
+
+
+def _add_transcribe(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("transcribe", help="Transcribe audio with Whisper large-v3 (faster-whisper)")
+    p.add_argument("audio", type=Path)
+    p.add_argument("-o", "--output", type=Path, default=Path("work/transcript.json"))
+    _add_transcribe_opts(p)
+
+
+def _add_transcribe_opts(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--model", default="large-v3", help="Whisper model size (default: large-v3)")
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--language", default="de")
+    p.add_argument("--beam-size", type=int, default=5)
+    p.add_argument("--no-vad", action="store_true", help="disable voice-activity-detection filtering")
+
+
+def _add_analyze(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("analyze", help="Sentence-split, lemmatize and tag the transcript with spaCy")
+    p.add_argument("transcript", type=Path)
+    p.add_argument("-o", "--output", type=Path, default=Path("work/analysis.json"))
+    _add_analyze_opts(p)
+
+
+def _add_analyze_opts(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--spacy-model", default="de_core_news_lg",
+                   help="German spaCy model (default: de_core_news_lg; de_core_news_md is lighter)")
+
+
+def _add_build(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("build", help="Build the words-to-learn JSON from the analysis")
+    p.add_argument("analysis", type=Path)
+    p.add_argument("-o", "--output", type=Path, default=Path("work/words.json"))
+    _add_build_opts(p)
+
+
+def _add_build_opts(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--known-words", type=Path,
+                   help="plain-text file with one known lemma per line")
+    p.add_argument("--min-count", type=int, default=1,
+                   help="drop words appearing fewer times than this (default: 1)")
+    p.add_argument("--min-token-len", type=int, default=2)
+    p.add_argument("--keep-pos", action="append", default=[], metavar="POS",
+                   help="POS tag to keep despite the default exclusions (e.g. NUM); repeatable")
+    p.add_argument("--drop-pos", action="append", default=[], metavar="POS",
+                   help="additional POS tag to exclude; repeatable")
+    p.add_argument("--keep-ent", action="append", default=[], metavar="ENT",
+                   help="entity type to keep (default excluded: PER LOC ORG); repeatable")
+    p.add_argument("--drop-ent", action="append", default=[], metavar="ENT",
+                   help="additional entity type to exclude (e.g. MISC); repeatable")
+    p.add_argument("--drop-stopwords", action="store_true",
+                   help="also drop German stopwords (der/und/aber ...)")
+
+
+def _add_run(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("run", help="Run transcribe -> analyze -> build from an audio file")
+    p.add_argument("audio", type=Path)
+    p.add_argument("--workdir", type=Path, default=Path("work"))
+    _add_transcribe_opts(p)
+    _add_analyze_opts(p)
+    _add_build_opts(p)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="transcript",
+        description="Extract German vocabulary to learn from a DVD movie.",
+    )
+    parser.add_argument("--force", action="store_true", help="re-run stages even if cached output exists")
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+    _add_extract(sub)
+    _add_transcribe(sub)
+    _add_analyze(sub)
+    _add_build(sub)
+    _add_run(sub)
+    return parser
+
+
+def filter_config_from_args(args: argparse.Namespace) -> FilterConfig:
+    exclude_pos = (DEFAULT_EXCLUDE_POS | set(args.drop_pos)) - set(args.keep_pos)
+    exclude_ent = (DEFAULT_EXCLUDE_ENT_TYPES | set(args.drop_ent)) - set(args.keep_ent)
+    return FilterConfig(
+        exclude_pos=frozenset(exclude_pos),
+        exclude_ent_types=frozenset(exclude_ent),
+        min_token_len=args.min_token_len,
+        drop_stopwords=args.drop_stopwords,
+        min_count=args.min_count,
+    )
+
+
+def _cmd_extract(args: argparse.Namespace) -> None:
+    from .extract import extract_audio
+
+    extract_audio(
+        args.dvd,
+        args.title,
+        args.output,
+        audio_track=args.audio_track,
+        audio_language=args.audio_language,
+        sample_rate=args.sample_rate,
+        channels=args.channels,
+        vlc_binary=args.vlc_binary,
+        dry_run=args.dry_run,
+    )
+
+
+def _cmd_transcribe(args: argparse.Namespace, audio: Path, output: Path) -> None:
+    from .transcribe import transcribe
+
+    transcribe(
+        audio,
+        output,
+        model_size=args.model,
+        device=args.device,
+        language=args.language,
+        beam_size=args.beam_size,
+        vad=not args.no_vad,
+        force=args.force,
+    )
+
+
+def _cmd_analyze(args: argparse.Namespace, transcript: Path, output: Path) -> None:
+    from .analyze import analyze
+
+    analyze(transcript, output, model_name=args.spacy_model, force=args.force)
+
+
+def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
+    from .aggregate import build_word_list, write_output
+    from .analyze import sentences_from_payload
+    from .artifacts import load_json
+    from .known_words import load_known_words
+
+    log = logging.getLogger(__name__)
+    if args.known_words:
+        known = load_known_words(args.known_words)
+        log.info("Loaded %d known words from %s", len(known), args.known_words)
+    else:
+        known = frozenset()
+        log.warning("No --known-words file given; the list will contain every word in the movie")
+
+    cfg = filter_config_from_args(args)
+    sentences = sentences_from_payload(load_json(analysis))
+    entries = build_word_list(sentences, known, cfg, verbose=args.verbose)
+    write_output(
+        entries,
+        output,
+        known_words_file=str(args.known_words) if args.known_words else None,
+        cfg=cfg,
+    )
+    log.info("Wrote %d words to learn -> %s", len(entries), output)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(message)s",
+    )
+    try:
+        if args.command == "extract":
+            _cmd_extract(args)
+        elif args.command == "transcribe":
+            _cmd_transcribe(args, args.audio, args.output)
+        elif args.command == "analyze":
+            _cmd_analyze(args, args.transcript, args.output)
+        elif args.command == "build":
+            _cmd_build(args, args.analysis, args.output)
+        elif args.command == "run":
+            workdir: Path = args.workdir
+            transcript_json = workdir / "transcript.json"
+            analysis_json = workdir / "analysis.json"
+            words_json = workdir / "words.json"
+            _cmd_transcribe(args, args.audio, transcript_json)
+            _cmd_analyze(args, transcript_json, analysis_json)
+            _cmd_build(args, analysis_json, words_json)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # subprocess failures, schema mismatches, ...
+        if args.verbose:
+            raise
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

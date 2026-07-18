@@ -1,0 +1,17 @@
+# Known German words, one lemma (dictionary form) per line.
+# Lines starting with '#' and blank lines are ignored.
+# Matching is case-insensitive and ß matches ss (Strasse == Straße).
+der
+die
+das
+und
+sein
+haben
+ich
+du
+nicht
+ja
+nein
+gut
+gehen
+Haus

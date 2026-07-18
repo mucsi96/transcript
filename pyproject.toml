@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "transcript"
+version = "0.1.0"
+description = "Extract German vocabulary from a DVD movie: VLC -> FLAC -> Whisper large-v3 -> spaCy -> flash-card word list"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "faster-whisper>=1.1,<2",
+    "spacy>=3.8,<3.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+transcript = "transcript.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
