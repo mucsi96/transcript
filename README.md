@@ -36,9 +36,23 @@ Without Nix: install ffmpeg and Python ≥ 3.10 yourself, then in a venv run
 `pip install -e ".[dev]"` and `python -m spacy download de_core_news_lg`.
 
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
-`~/.cache/huggingface`. With an NVIDIA GPU it runs in float16 (needs CUDA 12
-+ cuDNN 9); otherwise it falls back to CPU int8 automatically — expect
-roughly real-time speed on a modern CPU for a feature film.
+`~/.cache/huggingface`.
+
+### GPU acceleration (WSL2)
+
+CUDA works in WSL2 through the regular **Windows** NVIDIA driver — do not
+install a Linux driver inside WSL. If the GPU is visible (`nvidia-smi`
+works in WSL, `/dev/dxg` exists), the dev shell automatically:
+
+1. installs the cuBLAS/cuDNN 9 wheels (`pip install -e ".[gpu]"`) on first
+   entry, and
+2. puts `/usr/lib/wsl/lib` (the driver's `libcuda`) and the wheel library
+   directories on `LD_LIBRARY_PATH`.
+
+`transcribe` then auto-selects CUDA float16 and falls back to CPU int8 with
+a warning if the GPU can't be used. Expect roughly 10–20× realtime on a
+recent GPU versus ~1× realtime on CPU — a feature film drops from hours to
+minutes. Force a choice with `--device cuda` or `--device cpu`.
 
 ## Stage 1 — DVD → MKV → FLAC
 

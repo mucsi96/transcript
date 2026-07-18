@@ -196,6 +196,11 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
     )
+    if not args.verbose:
+        # huggingface-hub / httpx log every request at INFO, which buries
+        # the pipeline's own progress output during the model download.
+        for name in ("httpx", "httpcore", "huggingface_hub", "urllib3", "filelock"):
+            logging.getLogger(name).setLevel(logging.WARNING)
     try:
         if args.command == "extract":
             _cmd_extract(args)

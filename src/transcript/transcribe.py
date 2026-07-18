@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from .artifacts import SCHEMA_VERSION, load_json, save_json, should_skip
@@ -10,6 +11,20 @@ from .artifacts import SCHEMA_VERSION, load_json, save_json, should_skip
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "large-v3"
+PROGRESS_INTERVAL_S = 30.0
+
+
+def format_progress(done: float, total: float, elapsed: float) -> str:
+    """Human-readable progress line: percent of audio transcribed, realtime
+    speed factor, and ETA."""
+    speed = done / elapsed if elapsed > 0 else 0.0
+    pct = 100.0 * done / total if total else 0.0
+    if speed > 0 and total:
+        eta_min = (total - done) / speed / 60.0
+        eta = f"~{eta_min:.0f} min left"
+    else:
+        eta = "ETA unknown"
+    return f"{pct:.1f}% ({done:.0f}/{total:.0f} s of audio, {speed:.2f}x realtime, {eta})"
 
 
 def pick_device(prefer: str = "auto") -> tuple[str, str]:
@@ -72,15 +87,24 @@ def transcribe(
         condition_on_previous_text=False,
     )
 
+    log.info("Transcribing %.0f s (%.1f h) of audio ...", info.duration, info.duration / 3600)
     seg_records = []
+    start = time.monotonic()
+    last_progress = start
     # segments is a lazy generator: transcription happens while iterating.
     for seg in segments:
         seg_records.append(
             {"id": seg.id, "start": round(seg.start, 2), "end": round(seg.end, 2), "text": seg.text.strip()}
         )
-        if len(seg_records) % 50 == 0:
-            log.info("... %d segments, at %.0f s / %.0f s", len(seg_records), seg.end, info.duration)
-    log.info("Transcription done: %d segments, %.0f s of audio", len(seg_records), info.duration)
+        now = time.monotonic()
+        if now - last_progress >= PROGRESS_INTERVAL_S:
+            last_progress = now
+            log.info("%s", format_progress(seg.end, info.duration, now - start))
+    elapsed = time.monotonic() - start
+    log.info(
+        "Transcription done: %d segments, %.0f s of audio in %.0f min",
+        len(seg_records), info.duration, elapsed / 60,
+    )
 
     payload = {
         "schema_version": SCHEMA_VERSION,

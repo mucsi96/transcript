@@ -44,6 +44,22 @@
               echo "Downloading spaCy model de_core_news_lg (~570 MB, first run only) ..."
               python -m spacy download de_core_news_lg
             fi
+
+            # GPU on WSL2: the Windows NVIDIA driver exposes the GPU as
+            # /dev/dxg and libcuda under /usr/lib/wsl/lib. CTranslate2
+            # additionally needs cuBLAS/cuDNN, which come as pip wheels
+            # (the "gpu" extra).
+            if [ -e /dev/dxg ] && [ -d /usr/lib/wsl/lib ]; then
+              export LD_LIBRARY_PATH="/usr/lib/wsl/lib:$LD_LIBRARY_PATH"
+              if ! python -c "import nvidia.cudnn" >/dev/null 2>&1; then
+                echo "NVIDIA GPU detected — installing cuBLAS/cuDNN wheels (first run only) ..."
+                python -m pip install -e ".[gpu]"
+              fi
+              cuda_libs=$(python -c "import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ':' + os.path.dirname(nvidia.cudnn.lib.__file__))" 2>/dev/null || true)
+              if [ -n "$cuda_libs" ]; then
+                export LD_LIBRARY_PATH="$cuda_libs:$LD_LIBRARY_PATH"
+              fi
+            fi
           '';
         };
       });
