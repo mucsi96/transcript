@@ -17,17 +17,10 @@
         # ffmpeg); the Python dependencies live in a pip venv because
         # faster-whisper and the spaCy German models don't package cleanly
         # in nixpkgs.
-        devShells.default = pkgs.mkShell {
+        devShells.default = pkgs.mkShell ({
           packages = [
             python
             pkgs.ffmpeg  # audio extraction from MakeMKV rips (ffmpeg + ffprobe)
-          ];
-
-          # Manylinux wheels (ctranslate2, PyAV) need libstdc++/zlib from the
-          # Nix store when running under the Nix-provided Python.
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-            pkgs.stdenv.cc.cc.lib
-            pkgs.zlib
           ];
 
           shellHook = ''
@@ -60,7 +53,25 @@
                 export LD_LIBRARY_PATH="$cuda_libs:$LD_LIBRARY_PATH"
               fi
             fi
+
+            # Apple Silicon: mlx-whisper runs Whisper on the M-series GPU
+            # via Metal — several times faster than CPU inference. The
+            # transcribe stage auto-selects it when importable.
+            if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
+              if ! python -c "import mlx_whisper" >/dev/null 2>&1; then
+                echo "Apple Silicon detected — installing mlx-whisper (first run only) ..."
+                python -m pip install -e ".[mlx]"
+              fi
+            fi
           '';
-        };
+        } // pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          # Manylinux wheels (ctranslate2, PyAV) need libstdc++/zlib from the
+          # Nix store when running under the Nix-provided Python. macOS
+          # wheels bundle their own dylibs, so this is Linux-only.
+          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            pkgs.stdenv.cc.cc.lib
+            pkgs.zlib
+          ];
+        });
       });
 }

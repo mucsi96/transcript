@@ -38,7 +38,7 @@ Without Nix: install ffmpeg and Python ≥ 3.10 yourself, then in a venv run
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
 `~/.cache/huggingface`.
 
-### GPU acceleration (WSL2)
+### GPU acceleration (WSL2, NVIDIA)
 
 CUDA works in WSL2 through the regular **Windows** NVIDIA driver — do not
 install a Linux driver inside WSL. If the GPU is visible (`nvidia-smi`
@@ -53,6 +53,22 @@ works in WSL, `/dev/dxg` exists), the dev shell automatically:
 a warning if the GPU can't be used. Expect roughly 10–20× realtime on a
 recent GPU versus ~1× realtime on CPU — a feature film drops from hours to
 minutes. Force a choice with `--device cuda` or `--device cpu`.
+
+### macOS on Apple Silicon (M1/M2/...)
+
+The same `nix develop` works on macOS (the flake covers `aarch64-darwin`),
+and [MakeMKV for Mac](https://www.makemkv.com/) handles the DVD rip — a
+MacBook Air needs an external USB DVD drive. Paths are just normal ones
+(`~/Movies/movie.mkv`) instead of `/mnt/c/...`.
+
+Transcription uses the M-series **GPU via Metal**: the dev shell installs
+[mlx-whisper](https://pypi.org/project/mlx-whisper/) (Apple's MLX Whisper
+port) on first entry, and `transcribe` auto-selects it on Apple Silicon —
+several times faster than CPU inference, since faster-whisper/CTranslate2
+has no Metal backend. Force a backend with `--backend mlx` or
+`--backend faster-whisper`. Notes for the mlx backend: the `--device` flag
+is ignored, and there is no VAD pre-filter (use `--min-count 2` in `build`
+to catch stray hallucinated words).
 
 ## Stage 1 — DVD → MKV → FLAC
 

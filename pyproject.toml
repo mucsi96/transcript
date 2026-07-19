@@ -19,6 +19,8 @@ dev = ["pytest>=8"]
 # CUDA runtime libs for faster-whisper GPU inference (CTranslate2 needs
 # cuBLAS + cuDNN 9); the driver itself comes from Windows on WSL2.
 gpu = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12>=9,<10"]
+# Apple Silicon: Whisper on the M-series GPU via Metal.
+mlx = ["mlx-whisper>=0.4; platform_system == 'Darwin' and platform_machine == 'arm64'"]
 
 [project.scripts]
 transcript = "transcript.cli:main"

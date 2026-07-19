@@ -42,7 +42,10 @@ def _add_transcribe(sub: argparse._SubParsersAction) -> None:
 
 def _add_transcribe_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--model", default="large-v3", help="Whisper model size (default: large-v3)")
-    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])
+    p.add_argument("--backend", default="auto", choices=["auto", "faster-whisper", "mlx"],
+                   help="transcription backend (auto: mlx on Apple Silicon, faster-whisper elsewhere)")
+    p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
+                   help="faster-whisper device (ignored by the mlx backend)")
     p.add_argument("--language", default="de")
     p.add_argument("--beam-size", type=int, default=5)
     p.add_argument("--no-vad", action="store_true", help="disable voice-activity-detection filtering")
@@ -150,6 +153,7 @@ def _cmd_transcribe(args: argparse.Namespace, audio: Path, output: Path) -> None
         audio,
         output,
         model_size=args.model,
+        backend=args.backend,
         device=args.device,
         language=args.language,
         beam_size=args.beam_size,
