@@ -53,12 +53,12 @@ def test_run_accepts_all_stage_options():
     args = parse(
         "run", "movie.flac", "--workdir", "w",
         "--device", "cpu", "--spacy-model", "de_core_news_md",
-        "--known-words", "known.txt",
+        "--min-count", "2",
     )
     assert args.workdir == Path("w")
     assert args.device == "cpu"
     assert args.spacy_model == "de_core_news_md"
-    assert args.known_words == Path("known.txt")
+    assert args.min_count == 2
 
 
 def test_build_ffmpeg_command_by_language_exact_argv():

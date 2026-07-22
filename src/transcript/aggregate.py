@@ -69,7 +69,7 @@ def write_output(
     entries: list[WordEntry],
     output: Path,
     *,
-    known_words_file: str | None,
+    known_words_source: str | None,
     cfg: FilterConfig,
 ) -> dict:
     payload = {
@@ -77,7 +77,7 @@ def write_output(
         "generated_at": datetime.datetime.now(datetime.timezone.utc)
         .isoformat(timespec="seconds")
         .replace("+00:00", "Z"),
-        "known_words_file": known_words_file,
+        "known_words_source": known_words_source,
         "filter_config": cfg.to_dict(),
         "total_words": len(entries),
         "words": [

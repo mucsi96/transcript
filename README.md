@@ -112,15 +112,35 @@ use this only on discs you own, for personal study.
 # individually
 transcript transcribe work/movie.flac -o work/transcript.json
 transcript analyze work/transcript.json -o work/analysis.json
-transcript build work/analysis.json --known-words known_words.txt -o work/words.json
+transcript build work/analysis.json -o work/words.json
 
 # or in one go
-transcript run work/movie.flac --known-words known_words.txt --workdir work
+transcript run work/movie.flac --workdir work
 ```
 
-`known_words.txt` is a plain-text list of the words you already know, one
-lemma (dictionary form) per line — see `known_words.example.txt`. Matching
-is case-insensitive and treats `ß` and `ss` as equal.
+### Known words
+
+The words you already know come from a REST API. Configure it in a `.env`
+file in the project root (git-ignored; see `.env.example`):
+
+```bash
+KNOWN_WORDS_API_URL=https://example.com/api/known-words
+KNOWN_WORDS_API_TOKEN=your-secret-token
+```
+
+The `build` stage sends `GET $KNOWN_WORDS_API_URL` with
+`Authorization: Bearer $KNOWN_WORDS_API_TOKEN` and accepts any of these
+JSON response shapes:
+
+```json
+["laufen", "Haus"]
+{"words": ["laufen", "Haus"]}
+[{"word": "laufen"}, {"lemma": "Haus"}]
+```
+
+Entries should be lemmas (dictionary forms). Matching is case-insensitive
+and treats `ß` and `ss` as equal. If `KNOWN_WORDS_API_URL` is unset, the
+build runs with a warning and no words are excluded as known.
 
 ### Output format (`work/words.json`)
 

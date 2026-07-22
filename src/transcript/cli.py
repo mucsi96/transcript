@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -71,8 +72,6 @@ def _add_build(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_build_opts(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--known-words", type=Path,
-                   help="plain-text file with one known lemma per line")
     p.add_argument("--min-count", type=int, default=1,
                    help="drop words appearing fewer times than this (default: 1)")
     p.add_argument("--min-token-len", type=int, default=2)
@@ -172,29 +171,34 @@ def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
     from .aggregate import build_word_list, write_output
     from .analyze import sentences_from_payload
     from .artifacts import load_json
-    from .known_words import load_known_words
+    from .known_words import TOKEN_ENV_VAR, URL_ENV_VAR, fetch_known_words
 
     log = logging.getLogger(__name__)
-    if args.known_words:
-        known = load_known_words(args.known_words)
-        log.info("Loaded %d known words from %s", len(known), args.known_words)
+    url = os.environ.get(URL_ENV_VAR)
+    token = os.environ.get(TOKEN_ENV_VAR)
+    if url:
+        known = fetch_known_words(url, token)
+        log.info("Fetched %d known words from %s", len(known), url)
     else:
         known = frozenset()
-        log.warning("No --known-words file given; the list will contain every word in the movie")
+        log.warning(
+            "%s is not set (configure it in .env); the list will contain "
+            "every word in the movie", URL_ENV_VAR,
+        )
 
     cfg = filter_config_from_args(args)
     sentences = sentences_from_payload(load_json(analysis))
     entries = build_word_list(sentences, known, cfg, verbose=args.verbose)
-    write_output(
-        entries,
-        output,
-        known_words_file=str(args.known_words) if args.known_words else None,
-        cfg=cfg,
-    )
+    write_output(entries, output, known_words_source=url, cfg=cfg)
     log.info("Wrote %d words to learn -> %s", len(entries), output)
 
 
 def main(argv: list[str] | None = None) -> int:
+    from dotenv import find_dotenv, load_dotenv
+
+    # usecwd: search for .env from the current directory upward; the default
+    # searches from the installed package location, which never finds it.
+    load_dotenv(find_dotenv(usecwd=True))
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

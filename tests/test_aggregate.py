@@ -96,7 +96,9 @@ def test_output_json_roundtrip_keeps_umlauts(tmp_path, make_sentence, make_token
     )
     entries = build_word_list([sent], NO_KNOWN, CFG)
     out = tmp_path / "words.json"
-    payload = write_output(entries, out, known_words_file="known.txt", cfg=CFG)
+    payload = write_output(
+        entries, out, known_words_source="https://api.example.com/words", cfg=CFG
+    )
 
     raw = out.read_text(encoding="utf-8")
     assert "lächeln" in raw  # ensure_ascii=False: umlauts stay literal
