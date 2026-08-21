@@ -1,4 +1,4 @@
-from transcript.config import FilterConfig
+from transcript.config import DEFAULT_EXCLUDE_POS, FilterConfig
 from transcript.filters import is_learnable
 
 CFG = FilterConfig()
@@ -61,7 +61,37 @@ def test_misc_can_be_excluded(make_token):
     assert not keep(make_token(pos="ADJ", ent_type="MISC"), cfg)
 
 
-def test_stopwords_kept_by_default_dropped_when_enabled(make_token):
-    tok = make_token(text="aber", lemma="aber", pos="ADV", is_stop=True)
-    assert keep(tok)
-    assert not keep(tok, FilterConfig(drop_stopwords=True))
+def test_stopwords_dropped_by_default_keepable(make_token):
+    tok = make_token(text="so", lemma="so", pos="ADV", is_stop=True)
+    assert not keep(tok)
+    assert reason(tok) == "stopword"
+    assert keep(tok, FilterConfig(drop_stopwords=False))
+
+
+def test_function_words_are_dropped(make_token):
+    # the words that dominate any frequency list: der/sie/auf/sein/und/dass/zu
+    for text, lemma, pos in (
+        ("Der", "der", "DET"),
+        ("sie", "sie", "PRON"),
+        ("auf", "auf", "ADP"),
+        ("ist", "sein", "AUX"),
+        ("und", "und", "CCONJ"),
+        ("dass", "dass", "SCONJ"),
+        ("zu", "zu", "PART"),
+    ):
+        tok = make_token(text=text, lemma=lemma, pos=pos)
+        assert not keep(tok), lemma
+        assert reason(tok) == f"pos:{pos}"
+
+
+def test_function_class_can_be_kept(make_token):
+    tok = make_token(text="sich", lemma="sich", pos="PRON")
+    cfg = FilterConfig(exclude_pos=DEFAULT_EXCLUDE_POS - {"PRON"})
+    assert keep(tok, cfg)
+
+
+def test_content_words_survive_the_function_word_rules(make_token):
+    # ADV/VERB/ADJ are not closed classes, so only the stopword list touches
+    # them: "plötzlich" stays while "so" goes.
+    for lemma, pos in (("plötzlich", "ADV"), ("erzählen", "VERB"), ("müde", "ADJ")):
+        assert keep(make_token(text=lemma, lemma=lemma, pos=pos)), lemma

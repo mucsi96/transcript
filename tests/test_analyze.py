@@ -94,6 +94,22 @@ def test_sentences_from_payload_roundtrip():
     assert sentences[0].tokens[0] == TokenRecord("Hund", "Hund", "NOUN", "", True, False)
 
 
+def test_sentences_from_payload_rejects_a_payload_without_sentences():
+    with pytest.raises(ValueError) as excinfo:
+        sentences_from_payload({"schema_version": 1}, "work/analysis.json")
+    message = str(excinfo.value)
+    assert "work/analysis.json" in message
+    assert "'sentences' list" in message
+
+
+def test_sentences_from_payload_reports_a_malformed_record():
+    payload = {"sentences": [{"text": "Der Hund bellt."}]}  # no "tokens"
+    with pytest.raises(ValueError) as excinfo:
+        sentences_from_payload(payload, "work/analysis.json")
+    assert "malformed sentence record" in str(excinfo.value)
+    assert "--force" in str(excinfo.value)
+
+
 def test_real_german_pipeline_smoke():
     spacy = pytest.importorskip("spacy")
     if not spacy.util.is_package("de_core_news_lg"):

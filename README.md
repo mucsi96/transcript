@@ -12,7 +12,8 @@ DVD ──[MakeMKV on Windows]────────> movie.mkv              (
                                    ├> work/transcript.json (text segments + metadata)
 EPUB ─[epub: spine -> paragraphs]──┘
     ──[analyze: spaCy]─────────────> work/analysis.json    (sentences, lemmas, POS, NER)
-    ──[build: match + filter]──────> work/words.json       (words to learn + example sentences)
+    ──[build: match + filter]──────┬> work/known-words.json(what the API answered, for reference)
+                                   └> work/words.json      (words to learn + example sentences)
 ```
 
 A book skips the ripping and transcribing stages: `epub` writes the same text
@@ -177,9 +178,61 @@ JSON response shapes:
 [{"word": "laufen"}, {"lemma": "Haus"}]
 ```
 
-Entries should be lemmas (dictionary forms). Matching is case-insensitive
-and treats `ß` and `ss` as equal. If `KNOWN_WORDS_API_URL` is unset, the
-build runs with a warning and no words are excluded as known.
+Entries are flash-card headwords, so the notation a vocabulary list uses is
+understood and expanded to the lemma forms spaCy produces:
+
+| Entry                    | also matches the lemma           |
+| ------------------------ | -------------------------------- |
+| `der Kaffee`             | `Kaffee` (any of der/die/das/ein) |
+| `ausruhen (sich)`, `sich kümmern` | `ausruhen`, `kümmern`   |
+| `gern(e)`                | `gern`, `gerne`                  |
+| `auf jeden/keinen Fall`  | `auf jeden Fall`, `auf keinen Fall` |
+| `nächst-`                | `nächst`                         |
+| `der, die, das`          | `der`, `die`, `das`              |
+
+The entry itself always stays a key, so an endpoint that sends bare lemmas
+behaves exactly as before. Matching is case-insensitive and treats `ß` and
+`ss` as equal; it ignores part of speech, so `der Laden` also covers the
+verb `laden`. Multi-word entries match only as a whole — `auf jeden Fall`
+does not make `Fall` known. If `KNOWN_WORDS_API_URL` is unset, the build
+runs with a warning and no words are excluded as known.
+
+`KNOWN_WORDS_API_URL` must be the full path of the endpoint, not the site
+root — a root URL usually answers `200 text/html` with the web app's page,
+which `build` reports as *"did not return JSON but text/html"*.
+
+To check the endpoint without running the pipeline:
+
+```bash
+./scripts/check-known-words.sh                 # uses .env
+./scripts/check-known-words.sh https://example.com/api/known-words
+```
+
+It prints the status, content type and body (never the token), and counts
+the words when the response is a valid list.
+
+Each `build` also saves what the API answered next to its word list, as
+`work/known-words.json` (`--known-words-output PATH` to put it elsewhere):
+
+```json
+{
+  "schema_version": 1,
+  "fetched_at": "2026-08-21T14:03:57Z",
+  "source": "https://example.com/api/known-words",
+  "total_words": 1843,
+  "words": ["abend", "der kaffee", "laufen"],
+  "total_match_keys": 2571,
+  "match_keys": ["abend", "der kaffee", "kaffee", "laufen"]
+}
+```
+
+`words` is what the endpoint answered; `match_keys` is what those entries
+expand to and what the lemmas are actually compared against. Both are stored
+normalized — casefolded, `ß` as `ss`, whitespace collapsed. When a word you
+thought you knew turns up in `words.json`, grep it in `match_keys`: if it is
+missing, its entry is written in a notation the expansion does not cover.
+The file is rewritten on every build, and is not written at all when
+`KNOWN_WORDS_API_URL` is unset.
 
 ### Output format (`work/words.json`)
 
@@ -210,6 +263,17 @@ flash cards (front: lemma + word type, back: example sentences).
 
 On by default:
 
+- **Function words** — the closed classes: determiners (`DET`), pronouns
+  (`PRON`), prepositions (`ADP`), auxiliaries (`AUX`), conjunctions
+  (`CCONJ`/`SCONJ`) and particles (`PART`). "der", "sie", "auf", "sein",
+  "und" top every German frequency list and are learned as grammar, not as
+  flash cards. `--keep-pos PRON` (repeatable) puts a class back.
+- **Stopwords** — the same idea for the open classes, where a blanket POS
+  rule would throw away the words you actually want: spaCy's German stopword
+  list drops very common adverbs, verbs and adjectives like "so", "schon",
+  "machen", "gut", while leaving "plötzlich" or "erzählen" in.
+  `--keep-stopwords` turns it off. Note it also covers a handful of everyday
+  nouns ("Zeit", "Uhr", "Jahr", "Tag").
 - **Proper nouns** (`PROPN` POS tag) — person and place names are not
   vocabulary.
 - **Named entities** tagged `PER`/`LOC`/`ORG` by spaCy's NER — catches names
@@ -225,8 +289,6 @@ Optional:
 - `--min-count 2` — drop words heard only once; in a two-hour film these are
   often Whisper mis-transcriptions or too rare to matter. For a book, where
   the text is exact, `--min-count 1` (the default) is usually right.
-- `--drop-stopwords` — drop function words (der/und/aber). Off by default;
-  putting them in your known-words list once is the cleaner fix.
 
 Ideas for further filtering (extension points, not implemented — see
 `src/transcript/filters.py`):

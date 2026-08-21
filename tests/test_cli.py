@@ -1,7 +1,9 @@
+import json
 from pathlib import Path
 
-from transcript.cli import build_parser, filter_config_from_args, is_epub
+from transcript.cli import build_parser, filter_config_from_args, format_error, is_epub
 from transcript.extract import build_ffmpeg_command, format_tracks, parse_ffprobe_streams
+from transcript.known_words import KnownWordsError
 
 
 def parse(*argv):
@@ -65,17 +67,31 @@ def test_transcribe_defaults():
     assert not args.no_vad
 
 
+def test_known_words_output_defaults_to_beside_the_word_list():
+    assert parse("build", "analysis.json").known_words_output is None
+    args = parse("build", "analysis.json", "--known-words-output", "w/fetched.json")
+    assert args.known_words_output == Path("w/fetched.json")
+    assert parse("run", "buch.epub").known_words_output is None
+
+
+def test_build_filter_defaults_drop_function_words_and_stopwords():
+    cfg = filter_config_from_args(parse("build", "analysis.json"))
+    assert {"DET", "PRON", "ADP", "AUX", "CCONJ", "SCONJ", "PART"} <= cfg.exclude_pos
+    assert cfg.drop_stopwords
+
+
 def test_build_filter_config_overrides():
     args = parse(
         "build", "analysis.json",
-        "--keep-pos", "NUM", "--drop-ent", "MISC", "--drop-stopwords",
-        "--min-count", "2",
+        "--keep-pos", "NUM", "--keep-pos", "PRON", "--drop-ent", "MISC",
+        "--keep-stopwords", "--min-count", "2",
     )
     cfg = filter_config_from_args(args)
     assert "NUM" not in cfg.exclude_pos
+    assert "PRON" not in cfg.exclude_pos
     assert "PROPN" in cfg.exclude_pos
     assert "MISC" in cfg.exclude_ent_types
-    assert cfg.drop_stopwords
+    assert not cfg.drop_stopwords
     assert cfg.min_count == 2
 
 
@@ -138,6 +154,29 @@ def test_parse_ffprobe_streams():
         {"track": 1, "codec": "ac3", "channels": 2, "language": "eng", "title": ""},
         {"track": 2, "codec": "mp2", "channels": 2, "language": "und", "title": ""},
     ]
+
+
+def test_format_error_names_the_type_of_an_opaque_library_error():
+    # The message this whole exercise started from: alone it says nothing.
+    try:
+        json.loads("<!DOCTYPE html>")
+    except json.JSONDecodeError as exc:
+        assert format_error(exc) == f"JSONDecodeError: {exc}"
+    else:  # pragma: no cover
+        raise AssertionError("expected a JSONDecodeError")
+
+
+def test_format_error_passes_through_our_own_messages():
+    assert format_error(ValueError("work/x.json is not valid JSON")) == (
+        "work/x.json is not valid JSON"
+    )
+    assert format_error(KnownWordsError("the API did not return JSON")) == (
+        "the API did not return JSON"
+    )
+
+
+def test_format_error_falls_back_to_the_type_when_there_is_no_message():
+    assert format_error(KeyError()) == "KeyError"
 
 
 def test_format_tracks():

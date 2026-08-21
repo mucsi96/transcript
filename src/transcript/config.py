@@ -26,7 +26,16 @@ POS_LABELS: dict[str, str] = {
     "SPACE": "space",
 }
 
-DEFAULT_EXCLUDE_POS = frozenset({"PROPN", "PUNCT", "SYM", "NUM", "X", "SPACE"})
+# Closed word classes: articles, pronouns, prepositions, auxiliaries and
+# conjunctions ("der", "sie", "auf", "sein", "und"). German has a few hundred
+# of them in total, every learner meets them in the first weeks, and they
+# dominate any frequency list — so they are never flash-card material.
+# `--keep-pos DET` etc. puts a class back.
+FUNCTION_POS = frozenset({"ADP", "AUX", "CCONJ", "DET", "PART", "PRON", "SCONJ"})
+
+DEFAULT_EXCLUDE_POS = frozenset(
+    {"PROPN", "PUNCT", "SYM", "NUM", "X", "SPACE"} | FUNCTION_POS
+)
 # MISC is deliberately kept: German NER tags nationality adjectives like
 # "deutsch" as MISC, and those are worth learning.
 DEFAULT_EXCLUDE_ENT_TYPES = frozenset({"PER", "LOC", "ORG"})
@@ -40,7 +49,7 @@ class FilterConfig:
     exclude_ent_types: frozenset[str] = DEFAULT_EXCLUDE_ENT_TYPES
     min_token_len: int = 2
     require_alpha: bool = True
-    drop_stopwords: bool = False
+    drop_stopwords: bool = True
     min_count: int = 1
 
     def to_dict(self) -> dict:

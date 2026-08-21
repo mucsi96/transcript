@@ -179,10 +179,19 @@ def decode_markup(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _parse_xml(data: bytes, what: str):
+    """Parse a required EPUB XML file. Unlike the content documents these
+    must be well-formed, so a parse error means a broken book."""
+    try:
+        return ET.fromstring(data)
+    except ET.ParseError as exc:
+        raise ValueError(f"{what} is not well-formed XML ({exc}); not a readable EPUB") from exc
+
+
 def opf_path(container_xml: bytes) -> str:
     """Path of the OPF package document inside the ZIP, from
     META-INF/container.xml."""
-    root = ET.fromstring(container_xml)
+    root = _parse_xml(container_xml, CONTAINER_PATH)
     for element in root.iter():
         if _local(element.tag) == "rootfile":
             full_path = element.get("full-path")
@@ -208,7 +217,7 @@ def _is_content_document(href: str, media_type: str, properties: list[str]) -> b
 
 def parse_package(opf_xml: bytes, opf_zip_path: str) -> Package:
     """Parse the OPF package document into book metadata and the spine."""
-    root = ET.fromstring(opf_xml)
+    root = _parse_xml(opf_xml, f"package document {opf_zip_path}")
     base_dir = posixpath.dirname(opf_zip_path)
     metadata: dict[str, str | None] = {"title": None, "author": None, "language": None}
     manifest: dict[str, tuple[str, str, list[str]]] = {}

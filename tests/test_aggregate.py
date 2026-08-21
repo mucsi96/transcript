@@ -2,9 +2,10 @@ import json
 
 from transcript.aggregate import build_word_list, write_output
 from transcript.config import FilterConfig
+from transcript.known_words import KnownWords
 
 CFG = FilterConfig()
-NO_KNOWN = frozenset()
+NO_KNOWN = KnownWords()
 
 
 def test_counts_and_example_sentences(make_sentence, make_token):
@@ -50,7 +51,7 @@ def test_known_words_are_excluded(make_sentence, make_token):
         make_token(text="Hund", lemma="Hund", pos="NOUN"),
         make_token(text="bellt", lemma="bellen", pos="VERB"),
     )
-    entries = build_word_list([sent], frozenset({"hund"}), CFG)
+    entries = build_word_list([sent], KnownWords(["der Hund"]), CFG)
     assert [e.lemma for e in entries] == ["bellen"]
 
 

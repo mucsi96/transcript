@@ -219,5 +219,7 @@ __marimo__/
 
 # project artifacts
 work/
+work2/
 .direnv/
 result
+*.epub

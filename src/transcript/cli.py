@@ -93,15 +93,20 @@ def _add_build_opts(p: argparse.ArgumentParser) -> None:
                    help="drop words appearing fewer times than this (default: 1)")
     p.add_argument("--min-token-len", type=int, default=2)
     p.add_argument("--keep-pos", action="append", default=[], metavar="POS",
-                   help="POS tag to keep despite the default exclusions (e.g. NUM); repeatable")
+                   help="POS tag to keep despite the default exclusions "
+                        "(e.g. NUM, or PRON/DET and the other function classes); repeatable")
     p.add_argument("--drop-pos", action="append", default=[], metavar="POS",
                    help="additional POS tag to exclude; repeatable")
     p.add_argument("--keep-ent", action="append", default=[], metavar="ENT",
                    help="entity type to keep (default excluded: PER LOC ORG); repeatable")
     p.add_argument("--drop-ent", action="append", default=[], metavar="ENT",
                    help="additional entity type to exclude (e.g. MISC); repeatable")
-    p.add_argument("--drop-stopwords", action="store_true",
-                   help="also drop German stopwords (der/und/aber ...)")
+    p.add_argument("--keep-stopwords", action="store_true",
+                   help="keep very common words spaCy marks as stopwords "
+                        "(so/schon/machen/gut ...); they are dropped by default")
+    p.add_argument("--known-words-output", type=Path, metavar="PATH",
+                   help="where to save the fetched known-words list "
+                        "(default: known-words.json next to the words output)")
 
 
 def _add_run(sub: argparse._SubParsersAction) -> None:
@@ -145,7 +150,7 @@ def filter_config_from_args(args: argparse.Namespace) -> FilterConfig:
         exclude_pos=frozenset(exclude_pos),
         exclude_ent_types=frozenset(exclude_ent),
         min_token_len=args.min_token_len,
-        drop_stopwords=args.drop_stopwords,
+        drop_stopwords=not args.keep_stopwords,
         min_count=args.min_count,
     )
 
@@ -220,26 +225,69 @@ def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
     from .aggregate import build_word_list, write_output
     from .analyze import sentences_from_payload
     from .artifacts import load_json
-    from .known_words import TOKEN_ENV_VAR, URL_ENV_VAR, fetch_known_words
+    from .known_words import (
+        ARTIFACT_NAME,
+        TOKEN_ENV_VAR,
+        URL_ENV_VAR,
+        KnownWords,
+        fetch_known_words,
+        save_known_words,
+    )
 
     log = logging.getLogger(__name__)
+    cfg = filter_config_from_args(args)
+    # Read the analysis before the network call: a missing or corrupt
+    # artifact is certain and cheap to detect, and reporting it first keeps
+    # an unrelated API failure from masking it.
+    sentences = sentences_from_payload(load_json(analysis), analysis)
+
     url = os.environ.get(URL_ENV_VAR)
     token = os.environ.get(TOKEN_ENV_VAR)
     if url:
+        if not token:
+            log.warning(
+                "%s is set but %s is not; the request will be sent without "
+                "authentication", URL_ENV_VAR, TOKEN_ENV_VAR,
+            )
         known = fetch_known_words(url, token)
         log.info("Fetched %d known words from %s", len(known), url)
+        known_words_json = args.known_words_output or output.parent / ARTIFACT_NAME
+        save_known_words(known_words_json, known, source=url)
+        log.info("Saved the known words for reference -> %s", known_words_json)
+        if not known:
+            log.warning(
+                "%s returned no words; every word of the source will be "
+                "treated as unknown", url,
+            )
     else:
-        known = frozenset()
+        known = KnownWords()
         log.warning(
             "%s is not set (configure it in .env); the list will contain "
             "every word of the source", URL_ENV_VAR,
         )
 
-    cfg = filter_config_from_args(args)
-    sentences = sentences_from_payload(load_json(analysis))
     entries = build_word_list(sentences, known, cfg, verbose=args.verbose)
     write_output(entries, output, known_words_source=url, cfg=cfg)
     log.info("Wrote %d words to learn -> %s", len(entries), output)
+
+
+def format_error(exc: BaseException) -> str:
+    """One-line, user-facing rendering of a failure.
+
+    The stages raise their own exception types, or plain
+    ValueError/RuntimeError/FileNotFoundError, with messages that are
+    complete on their own; those are printed as-is. Anything escaping from a
+    library gets its type name prepended, because such messages read as
+    nonsense alone — json's "Expecting value: line 1 column 1 (char 0)"
+    being the classic example.
+    """
+    message = str(exc).strip()
+    if not message:
+        return type(exc).__name__
+    raised_here = type(exc).__module__.split(".")[0] == __package__.split(".")[0]
+    if raised_here or type(exc) in (ValueError, RuntimeError, FileNotFoundError):
+        return message
+    return f"{type(exc).__name__}: {message}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -277,13 +325,16 @@ def main(argv: list[str] | None = None) -> int:
             _cmd_text(args, args.source, transcript_json)
             _cmd_analyze(args, transcript_json, analysis_json)
             _cmd_build(args, analysis_json, words_json)
-    except FileNotFoundError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
+    except KeyboardInterrupt:
+        # Stages write their artifact atomically, so a cached one is either
+        # complete or absent; re-running resumes at the interrupted stage.
+        print("\ninterrupted", file=sys.stderr)
+        return 130
     except Exception as exc:  # subprocess failures, schema mismatches, ...
         if args.verbose:
             raise
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {format_error(exc)}", file=sys.stderr)
+        print("Re-run with -v for the full traceback.", file=sys.stderr)
         return 1
     return 0
 

@@ -3,16 +3,15 @@ final flash-card word list."""
 
 from __future__ import annotations
 
-import datetime
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .analyze import SentenceRecord
-from .artifacts import SCHEMA_VERSION, save_json
+from .artifacts import SCHEMA_VERSION, save_json, utc_timestamp
 from .config import FilterConfig, pos_label
 from .filters import is_learnable
-from .known_words import is_known
+from .known_words import KnownWords, is_known
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class WordEntry:
 
 def build_word_list(
     sentences: list[SentenceRecord],
-    known: frozenset[str],
+    known: KnownWords,
     cfg: FilterConfig,
     *,
     verbose: bool = False,
@@ -74,9 +73,7 @@ def write_output(
 ) -> dict:
     payload = {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": datetime.datetime.now(datetime.timezone.utc)
-        .isoformat(timespec="seconds")
-        .replace("+00:00", "Z"),
+        "generated_at": utc_timestamp(),
         "known_words_source": known_words_source,
         "filter_config": cfg.to_dict(),
         "total_words": len(entries),

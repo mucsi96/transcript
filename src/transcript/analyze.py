@@ -14,7 +14,7 @@ import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .artifacts import SCHEMA_VERSION, load_json, save_json, should_skip
+from .artifacts import SCHEMA_VERSION, load_json, require_list, save_json, should_skip
 
 log = logging.getLogger(__name__)
 
@@ -98,15 +98,22 @@ def chunk_segments(segment_texts: list[str], max_chars: int = MAX_CHUNK_CHARS) -
     return chunks
 
 
-def sentences_from_payload(payload: dict) -> list[SentenceRecord]:
+def sentences_from_payload(payload: dict, source: Path | str = "analysis") -> list[SentenceRecord]:
     """Rebuild records from an analysis.json payload."""
-    return [
-        SentenceRecord(
-            text=sent["text"],
-            tokens=tuple(TokenRecord(**tok) for tok in sent["tokens"]),
-        )
-        for sent in payload["sentences"]
-    ]
+    sentences = require_list(payload, "sentences", Path(source))
+    try:
+        return [
+            SentenceRecord(
+                text=sent["text"],
+                tokens=tuple(TokenRecord(**tok) for tok in sent["tokens"]),
+            )
+            for sent in sentences
+        ]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(
+            f"{source}: malformed sentence record ({type(exc).__name__}: {exc}); "
+            f"re-run the analyze stage with --force."
+        ) from exc
 
 
 def analyze(
@@ -120,8 +127,21 @@ def analyze(
         return load_json(output)
 
     transcript = load_json(transcript_path)
-    segment_texts = [seg["text"] for seg in transcript["segments"]]
+    segments = require_list(transcript, "segments", transcript_path)
+    try:
+        segment_texts = [seg["text"] for seg in segments]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(
+            f"{transcript_path}: a segment has no 'text' field "
+            f"({type(exc).__name__}: {exc}); re-run the text stage with --force."
+        ) from exc
+
     chunks = chunk_segments(segment_texts)
+    if not chunks:
+        raise ValueError(
+            f"{transcript_path} contains no text to analyze ({len(segments)} "
+            f"segment(s), all empty)."
+        )
     log.info("Analyzing %d chunk(s) with %s ...", len(chunks), model_name)
 
     nlp = load_nlp(model_name)
