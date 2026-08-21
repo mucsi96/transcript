@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from transcript.cli import build_parser, filter_config_from_args
+from transcript.cli import build_parser, filter_config_from_args, is_epub
 from transcript.extract import build_ffmpeg_command, format_tracks, parse_ffprobe_streams
 
 
@@ -24,6 +24,36 @@ def test_extract_args():
 def test_extract_list_tracks_flag():
     args = parse("extract", "movie.mkv", "--list-tracks")
     assert args.list_tracks
+
+
+def test_epub_args():
+    args = parse("epub", "buch.epub", "--chapters", "3-20", "-o", "work/text.json")
+    assert args.command == "epub"
+    assert args.source == Path("buch.epub")
+    assert args.chapters == "3-20"
+    assert args.output == Path("work/text.json")
+    assert not args.list_chapters
+
+
+def test_epub_defaults_to_the_transcript_artifact():
+    args = parse("epub", "buch.epub")
+    assert args.output == Path("work/transcript.json")
+    assert args.chapters is None
+
+
+def test_epub_list_chapters_flag():
+    assert parse("epub", "buch.epub", "--list-chapters").list_chapters
+
+
+def test_run_accepts_an_epub_source():
+    args = parse("run", "buch.epub", "--chapters", "2-9")
+    assert args.source == Path("buch.epub")
+    assert args.chapters == "2-9"
+
+
+def test_is_epub_by_suffix():
+    assert is_epub(Path("Buch.EPUB"))
+    assert not is_epub(Path("movie.flac"))
 
 
 def test_transcribe_defaults():
@@ -55,6 +85,7 @@ def test_run_accepts_all_stage_options():
         "--device", "cpu", "--spacy-model", "de_core_news_md",
         "--min-count", "2",
     )
+    assert args.source == Path("movie.flac")
     assert args.workdir == Path("w")
     assert args.device == "cpu"
     assert args.spacy_model == "de_core_news_md"

@@ -1,17 +1,22 @@
 # transcript
 
-Extract the German vocabulary of a DVD movie **before** watching it, so you
-can learn the words as flash cards first.
+Extract the German vocabulary of a DVD movie **before** watching it, or of an
+EPUB book before reading it, so you can learn the words as flash cards first.
 
 Pipeline stages, each resumable through a JSON/FLAC artifact in `work/`:
 
 ```
 DVD ──[MakeMKV on Windows]────────> movie.mkv              (rip main title, keep German audio)
     ──[extract: ffmpeg]───────────> work/movie.flac        (16 kHz mono FLAC)
-    ──[transcribe: faster-whisper]─> work/transcript.json  (Whisper large-v3, German)
+    ──[transcribe: faster-whisper]─┐
+                                   ├> work/transcript.json (text segments + metadata)
+EPUB ─[epub: spine -> paragraphs]──┘
     ──[analyze: spaCy]─────────────> work/analysis.json    (sentences, lemmas, POS, NER)
     ──[build: match + filter]──────> work/words.json       (words to learn + example sentences)
 ```
+
+A book skips the ripping and transcribing stages: `epub` writes the same text
+artifact Whisper produces, so `analyze` and `build` are shared.
 
 Every stage skips itself if its output already exists; pass `--force` to
 regenerate.
@@ -106,7 +111,40 @@ Options:
 Whether ripping a CSS-protected disc is legal depends on your jurisdiction —
 use this only on discs you own, for personal study.
 
-## Stages 2–4 — audio → word list
+## Stage 1b — EPUB → text
+
+For a book there is nothing to rip or transcribe; the text is already there:
+
+```bash
+# see the reading order: spine index, chapter title, size
+transcript epub ~/books/buch.epub --list-chapters
+
+# extract the text (all chapters)
+transcript epub ~/books/buch.epub -o work/transcript.json
+```
+
+Only the spine's XHTML documents are read, in reading order; the navigation
+document, the NCX table of contents, images, `<script>` and `<style>` are
+skipped. One segment is one paragraph, so the spaCy chunker gets the same
+sentence-aligned units it gets from Whisper. Chapter titles come from each
+document's first heading.
+
+Options:
+
+- `--chapters 3-20,25` — only read these spine documents (0-based indices
+  from `--list-chapters`, ranges and commas allowed). Useful for skipping
+  cover pages, copyright notices, forewords and indexes; `--list-chapters`
+  honours the selection, so you can preview it.
+- Front matter that carries no text (a cover page that is just an image)
+  stays in the `--list-chapters` output with 0 characters, so the indices
+  never shift.
+
+Only DRM-free EPUBs can be read — a file with an Adobe/FairPlay
+`META-INF/encryption.xml` is reported as DRM-protected rather than parsed
+into gibberish. `.mobi`/`.azw` are not supported; convert them to EPUB with
+[Calibre](https://calibre-ebook.com/) first.
+
+## Stages 2–4 — audio or text → word list
 
 ```bash
 # individually
@@ -114,8 +152,9 @@ transcript transcribe work/movie.flac -o work/transcript.json
 transcript analyze work/transcript.json -o work/analysis.json
 transcript build work/analysis.json -o work/words.json
 
-# or in one go
+# or in one go — the first stage follows the source's suffix
 transcript run work/movie.flac --workdir work
+transcript run ~/books/buch.epub --workdir work --chapters 3-20
 ```
 
 ### Known words
@@ -163,8 +202,8 @@ build runs with a warning and no words are excluded as known.
 }
 ```
 
-One entry per (lemma, word type), sorted by how often it occurs in the
-movie, with every distinct sentence it appeared in — ready to turn into
+One entry per (lemma, word type), sorted by how often it occurs in the film
+or book, with every distinct sentence it appeared in — ready to turn into
 flash cards (front: lemma + word type, back: example sentences).
 
 ## How "not worth learning" words are excluded
@@ -184,7 +223,8 @@ On by default:
 Optional:
 
 - `--min-count 2` — drop words heard only once; in a two-hour film these are
-  often Whisper mis-transcriptions or too rare to matter.
+  often Whisper mis-transcriptions or too rare to matter. For a book, where
+  the text is exact, `--min-count 1` (the default) is usually right.
 - `--drop-stopwords` — drop function words (der/und/aber). Off by default;
   putting them in your known-words list once is the cleaner fix.
 
@@ -204,11 +244,17 @@ Ideas for further filtering (extension points, not implemented — see
 - Whisper can hallucinate short phrases during music or silence. The
   built-in VAD filter and disabled text conditioning suppress most of it;
   `--min-count 2` catches stragglers.
+- EPUB is a loose format: chapter titles are guessed from the first heading
+  of each document, and books whose chapters are split across many small
+  files (or merged into one huge file) list accordingly. Check
+  `--list-chapters` before selecting with `--chapters`.
+- Footnotes, page headers and similar furniture are part of the text and are
+  analyzed like prose.
 
 ## Development
 
 ```bash
-pytest          # unit tests; no DVD, ffmpeg, Whisper model or spaCy model needed
+pytest          # unit tests; no DVD, EPUB, ffmpeg, Whisper model or spaCy model needed
 ```
 
 The spaCy-dependent smoke test auto-skips when `de_core_news_lg` is not

@@ -1,5 +1,9 @@
 """Stage 3: spaCy analysis — sentence splitting, lemmatization, POS, NER.
 
+Input is the text artifact of stage 2 — Whisper segments from `transcribe`
+or book paragraphs from `epub`; both are lists of short text segments, so
+this stage does not care which produced them.
+
 spaCy objects are converted to plain dataclasses immediately; the later
 stages (matching, filtering, aggregation) never touch spaCy.
 """
@@ -16,9 +20,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SPACY_MODEL = "de_core_news_lg"
 
-# nlp() memory grows with document size; a 2-hour film transcript is chunked
-# at Whisper-segment boundaries (segments end at pauses, so sentences are not
-# cut mid-chunk the way a fixed character split would).
+# nlp() memory grows with document size, so the text is chunked at segment
+# boundaries: Whisper segments end at pauses and book segments at paragraph
+# ends, so sentences are not cut mid-chunk the way a fixed character split
+# would cut them.
 MAX_CHUNK_CHARS = 40_000
 
 

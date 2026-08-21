@@ -208,6 +208,7 @@ def transcribe(
 
     payload = {
         "schema_version": SCHEMA_VERSION,
+        "source_type": "audio",
         "audio_file": str(audio),
         "model": model_size,
         **meta,

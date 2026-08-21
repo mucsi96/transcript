@@ -1,5 +1,5 @@
 {
-  description = "German DVD vocabulary extraction pipeline (MakeMKV/ffmpeg -> faster-whisper -> spaCy)";
+  description = "German vocabulary extraction pipeline for DVDs and EPUBs (MakeMKV/ffmpeg -> faster-whisper -> spaCy)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";

@@ -2,8 +2,9 @@
 
 Subcommands mirror the pipeline stages; each reads/writes a JSON artifact in
 the work directory and skips itself if its output already exists (--force to
-redo). `run` chains transcribe -> analyze -> build starting from an audio
-file — DVD ripping stays a separate step since it needs the physical disc.
+redo). `run` chains the text stage (transcribe for audio, epub for a book)
+-> analyze -> build; it picks the first stage from the source's suffix. DVD
+ripping stays a separate step since it needs the physical disc.
 """
 
 from __future__ import annotations
@@ -32,6 +33,22 @@ def _add_extract(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--ffmpeg-binary", default="ffmpeg")
     p.add_argument("-o", "--output", type=Path, default=Path("work/movie.flac"))
     p.add_argument("--dry-run", action="store_true", help="print the ffmpeg command without running it")
+
+
+def _add_epub(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("epub", help="Extract the text of an EPUB book (skips transcribe)")
+    p.add_argument("source", type=Path, help="EPUB file, e.g. ~/books/buch.epub")
+    p.add_argument("--list-chapters", action="store_true",
+                   help="list the spine documents (index, title, size) and exit; "
+                        "honours --chapters")
+    p.add_argument("-o", "--output", type=Path, default=Path("work/transcript.json"))
+    _add_epub_opts(p)
+
+
+def _add_epub_opts(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--chapters", metavar="SPEC",
+                   help="only read these spine chapters, e.g. '3-20,25' "
+                        "(0-based, see --list-chapters); default: all of them")
 
 
 def _add_transcribe(sub: argparse._SubParsersAction) -> None:
@@ -88,9 +105,13 @@ def _add_build_opts(p: argparse.ArgumentParser) -> None:
 
 
 def _add_run(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("run", help="Run transcribe -> analyze -> build from an audio file")
-    p.add_argument("audio", type=Path)
+    p = sub.add_parser(
+        "run",
+        help="Run transcribe/epub -> analyze -> build from an audio file or an EPUB",
+    )
+    p.add_argument("source", type=Path, help="audio file, or a .epub book")
     p.add_argument("--workdir", type=Path, default=Path("work"))
+    _add_epub_opts(p)
     _add_transcribe_opts(p)
     _add_analyze_opts(p)
     _add_build_opts(p)
@@ -99,17 +120,22 @@ def _add_run(sub: argparse._SubParsersAction) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="transcript",
-        description="Extract German vocabulary to learn from a DVD movie.",
+        description="Extract German vocabulary to learn from a DVD movie or an EPUB book.",
     )
     parser.add_argument("--force", action="store_true", help="re-run stages even if cached output exists")
     parser.add_argument("-v", "--verbose", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
     _add_extract(sub)
+    _add_epub(sub)
     _add_transcribe(sub)
     _add_analyze(sub)
     _add_build(sub)
     _add_run(sub)
     return parser
+
+
+def is_epub(source: Path) -> bool:
+    return Path(source).suffix.lower() == ".epub"
 
 
 def filter_config_from_args(args: argparse.Namespace) -> FilterConfig:
@@ -145,6 +171,20 @@ def _cmd_extract(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_epub(args: argparse.Namespace, source: Path, output: Path) -> None:
+    from .epub import extract_text, format_chapters, parse_chapter_selection, read_chapters
+
+    selection = parse_chapter_selection(args.chapters) if args.chapters else None
+
+    if getattr(args, "list_chapters", False):
+        _, chapters = read_chapters(source, selection)
+        print(f"Chapters in {source}:")
+        print(format_chapters(chapters))
+        return
+
+    extract_text(source, output, chapters=selection, force=args.force)
+
+
 def _cmd_transcribe(args: argparse.Namespace, audio: Path, output: Path) -> None:
     from .transcribe import transcribe
 
@@ -159,6 +199,15 @@ def _cmd_transcribe(args: argparse.Namespace, audio: Path, output: Path) -> None
         vad=not args.no_vad,
         force=args.force,
     )
+
+
+def _cmd_text(args: argparse.Namespace, source: Path, output: Path) -> None:
+    """Produce the text artifact: EPUBs are read, everything else is
+    transcribed."""
+    if is_epub(source):
+        _cmd_epub(args, source, output)
+    else:
+        _cmd_transcribe(args, source, output)
 
 
 def _cmd_analyze(args: argparse.Namespace, transcript: Path, output: Path) -> None:
@@ -183,7 +232,7 @@ def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
         known = frozenset()
         log.warning(
             "%s is not set (configure it in .env); the list will contain "
-            "every word in the movie", URL_ENV_VAR,
+            "every word of the source", URL_ENV_VAR,
         )
 
     cfg = filter_config_from_args(args)
@@ -212,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "extract":
             _cmd_extract(args)
+        elif args.command == "epub":
+            _cmd_epub(args, args.source, args.output)
         elif args.command == "transcribe":
             _cmd_transcribe(args, args.audio, args.output)
         elif args.command == "analyze":
@@ -223,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
             transcript_json = workdir / "transcript.json"
             analysis_json = workdir / "analysis.json"
             words_json = workdir / "words.json"
-            _cmd_transcribe(args, args.audio, transcript_json)
+            _cmd_text(args, args.source, transcript_json)
             _cmd_analyze(args, transcript_json, analysis_json)
             _cmd_build(args, analysis_json, words_json)
     except FileNotFoundError as exc:
