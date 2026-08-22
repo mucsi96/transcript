@@ -28,9 +28,14 @@
               ${python.interpreter} -m venv .venv
             fi
             source .venv/bin/activate
-            if ! python -m pip show transcript >/dev/null 2>&1; then
-              echo "Installing Python dependencies (first run only) ..."
+            # Reinstall whenever pyproject.toml changes, so an existing venv
+            # picks up new or changed dependencies, not just the first run.
+            deps_stamp=.venv/.pyproject-sha256
+            deps_now=$(sha256sum pyproject.toml | cut -d' ' -f1)
+            if [ "$(cat "$deps_stamp" 2>/dev/null)" != "$deps_now" ]; then
+              echo "Installing Python dependencies (pyproject.toml changed) ..."
               python -m pip install -e ".[dev]"
+              echo "$deps_now" > "$deps_stamp"
             fi
 
             # GPU on WSL2: the Windows NVIDIA driver exposes the GPU as

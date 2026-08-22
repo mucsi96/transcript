@@ -136,9 +136,13 @@ RESPONSE_FORMAT = {
 }
 
 
-class WordExtractionError(RuntimeError):
-    """The LLM could not be called, or answered with something that is not
-    a word list. The message is written to be shown to the user as-is."""
+class LLMError(RuntimeError):
+    """An LLM stage could not call the API, or the answer was unusable.
+    Messages are written to be shown to the user as-is."""
+
+
+class WordExtractionError(LLMError):
+    """The word-extraction stage's flavor of LLMError."""
 
 
 @dataclass(frozen=True)
@@ -189,26 +193,39 @@ def words_from_data(data, source: str) -> tuple[WordRecord, ...]:
     return tuple(records)
 
 
-def parse_completion(response, sentence: str) -> tuple[WordRecord, ...]:
-    """Pull the word list out of one chat-completion response."""
+def completion_json(response, label: str, error: type[LLMError] = LLMError):
+    """The JSON payload of one chat-completion response. Every way a
+    response can be unusable — malformed object, refusal, truncation, empty
+    or non-JSON content — is raised as `error` with the given label."""
     try:
-        message = response.choices[0].message
+        choice = response.choices[0]
+        message = choice.message
     except (AttributeError, IndexError) as exc:
-        raise WordExtractionError(
-            f"unexpected LLM response for {sentence!r}: {type(exc).__name__}: {exc}"
+        raise error(
+            f"unexpected LLM response for {label}: {type(exc).__name__}: {exc}"
         ) from exc
+    if getattr(choice, "finish_reason", None) == "length":
+        raise error(
+            f"the LLM answer for {label} was cut off at the output token limit; "
+            f"the result would be incomplete."
+        )
     refusal = getattr(message, "refusal", None)
     if refusal:
-        raise WordExtractionError(f"the LLM refused {sentence!r}: {refusal}")
+        raise error(f"the LLM refused {label}: {refusal}")
     if not message.content:
-        raise WordExtractionError(f"the LLM returned no content for {sentence!r}")
+        raise error(f"the LLM returned no content for {label}")
     try:
-        data = json.loads(message.content)
+        return json.loads(message.content)
     except ValueError as exc:
-        raise WordExtractionError(
-            f"the LLM did not return valid JSON for {sentence!r}: {exc}. "
+        raise error(
+            f"the LLM did not return valid JSON for {label}: {exc}. "
             f"Response: {message.content[:200]}"
         ) from exc
+
+
+def parse_completion(response, sentence: str) -> tuple[WordRecord, ...]:
+    """Pull the word list out of one chat-completion response."""
+    data = completion_json(response, repr(sentence), WordExtractionError)
     try:
         return words_from_data(data, f"LLM answer for {sentence!r}")
     except ValueError as exc:
@@ -249,31 +266,53 @@ def checkpoint_path(output: Path) -> Path:
     return output.with_name(output.name + ".partial.jsonl")
 
 
-def load_checkpoint(path: Path) -> dict[str, tuple[WordRecord, ...]]:
-    """Results of a previous, interrupted run: sentence text -> words.
+def read_checkpoint(path: Path) -> list[dict]:
+    """Records of a previous, interrupted run's JSONL checkpoint.
 
     A torn last line (the run died mid-write) is skipped; any other
     malformed line fails the stage rather than silently dropping paid-for
-    results.
+    results. Shared by every LLM stage; each caller validates its own
+    record shape (and should treat a bad *last* record like a torn line).
     """
-    done: dict[str, tuple[WordRecord, ...]] = {}
+    records: list[dict] = []
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.read().splitlines()
     except FileNotFoundError:
-        return done
+        return records
     for lineno, line in enumerate(lines, 1):
         if not line.strip():
             continue
         try:
             record = json.loads(line)
-            done[record["text"]] = words_from_data(record, f"{path}:{lineno}")
-        except (ValueError, KeyError, TypeError) as exc:
+            if not isinstance(record, dict):
+                raise ValueError(f"expected an object, got {type(record).__name__}")
+            records.append(record)
+        except ValueError as exc:
             if lineno == len(lines):
                 log.warning("Ignoring torn last checkpoint line in %s", path)
                 continue
             raise ValueError(
                 f"{path}:{lineno} is not a checkpoint record "
+                f"({type(exc).__name__}: {exc}); delete the file to restart "
+                f"the LLM stage from scratch."
+            ) from exc
+    return records
+
+
+def load_checkpoint(path: Path) -> dict[str, tuple[WordRecord, ...]]:
+    """Word-stage checkpoint: sentence text -> words."""
+    done: dict[str, tuple[WordRecord, ...]] = {}
+    records = read_checkpoint(path)
+    for pos, record in enumerate(records, 1):
+        try:
+            done[record["text"]] = words_from_data(record, str(path))
+        except (ValueError, KeyError, TypeError) as exc:
+            if pos == len(records):
+                log.warning("Ignoring torn last checkpoint line in %s", path)
+                continue
+            raise ValueError(
+                f"{path}: not a checkpoint record "
                 f"({type(exc).__name__}: {exc}); delete the file to restart "
                 f"the LLM stage from scratch."
             ) from exc

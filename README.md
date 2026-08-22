@@ -8,17 +8,22 @@ Pipeline stages, each resumable through a JSON/FLAC artifact in `work/`:
 ```
 DVD ──[MakeMKV on Windows]────────> movie.mkv              (rip main title, keep German audio)
     ──[extract: ffmpeg]───────────> work/movie.flac        (16 kHz mono FLAC)
-    ──[transcribe: faster-whisper]─┐
-                                   ├> work/transcript.json (text segments + metadata)
-EPUB ─[epub: spine -> paragraphs]──┘
-    ──[sentences: syntok]──────────> work/sentences.json      (every sentence of the source)
+    ──[transcribe: faster-whisper]─> work/transcript.json  (text segments + metadata)
+    ──[sentences: syntok]──────────┐
+                                   ├> work/sentences.json     (every sentence of the source)
+EPUB ─[epub: spine -> raw XHTML]──┐│
+      work/chapters.json          ─┘ (sentences: LLM judges each chapter, extracts its sentences)
     ──[words: OpenAI, per sentence]> work/sentence-words.json (dictionary-form words per sentence)
     ──[build: match + aggregate]───┬> work/known-words.json   (what the API answered, for reference)
                                    └> work/words.json         (words to learn + example sentences)
 ```
 
-A book skips the ripping and transcribing stages: `epub` writes the same text
-artifact Whisper produces, so `sentences`, `words` and `build` are shared.
+Both sources converge on the same `sentences.json`, so `words` and `build`
+are shared. For audio the sentences come from syntok; for a book each
+chapter's **raw XHTML** goes to the LLM, which first decides whether the
+document is book content at all — covers, title pages, copyright notices,
+tables of contents and indexes are skipped automatically — and then returns
+the chapter's sentences.
 
 Word extraction is done by an LLM that sees one whole sentence at a time,
 because German separable verbs make per-token analysis wrong: in "Er fängt
@@ -119,29 +124,31 @@ Options:
 Whether ripping a CSS-protected disc is legal depends on your jurisdiction —
 use this only on discs you own, for personal study.
 
-## Stage 1b — EPUB → text
+## Stage 1b — EPUB → chapters
 
-For a book there is nothing to rip or transcribe; the text is already there:
+For a book there is nothing to rip or transcribe; this stage only unpacks
+the spine's XHTML documents, in reading order, with their **raw markup**:
 
 ```bash
 # see the reading order: spine index, chapter title, size
 transcript epub ~/books/buch.epub --list-chapters
 
-# extract the text (all chapters)
-transcript epub ~/books/buch.epub -o work/transcript.json
+# unpack the chapters (all of them; the sentences stage sorts them out)
+transcript epub ~/books/buch.epub -o work/chapters.json
 ```
 
-Only the spine's XHTML documents are read, in reading order; the navigation
-document, the NCX table of contents, images, `<script>` and `<style>` are
-skipped. One segment is one paragraph, the same shape the Whisper stage
-produces. Chapter titles come from each document's first heading.
+The EPUB 3 navigation document and non-XHTML files (images, the NCX table
+of contents) are dropped here; everything else is judged later by the LLM,
+chapter by chapter. Chapter titles in `--list-chapters` are guessed from
+each document's first heading.
 
 Options:
 
-- `--chapters 3-20,25` — only read these spine documents (0-based indices
-  from `--list-chapters`, ranges and commas allowed). Useful for skipping
-  cover pages, copyright notices, forewords and indexes; `--list-chapters`
-  honours the selection, so you can preview it.
+- `--chapters 3-20,25` — only keep these spine documents (0-based indices
+  from `--list-chapters`, ranges and commas allowed). This is an *optional*
+  override: the sentences stage skips covers, title pages, copyright
+  notices, tables of contents and indexes by itself, so the flag is mainly
+  for cutting cost on a partial run or overruling a wrong LLM judgement.
 - Front matter that carries no text (a cover page that is just an image)
   stays in the `--list-chapters` output with 0 characters, so the indices
   never shift.
@@ -156,26 +163,40 @@ into gibberish. `.mobi`/`.azw` are not supported; convert them to EPUB with
 ```bash
 # individually
 transcript transcribe work/movie.flac -o work/transcript.json
-transcript sentences work/transcript.json -o work/sentences.json
+transcript sentences work/transcript.json -o work/sentences.json   # or work/chapters.json for a book
 transcript words work/sentences.json -o work/sentence-words.json
 transcript build work/sentence-words.json -o work/words.json
 
 # or in one go — the first stage follows the source's suffix
 transcript run work/movie.flac --workdir work
-transcript run ~/books/buch.epub --workdir work --chapters 3-20
+transcript run ~/books/buch.epub --workdir work
 ```
 
 ### Sentences (`work/sentences.json`)
 
-`sentences` splits the transcript into sentences with
-[syntok](https://github.com/fnl/syntok), a small pure-Python segmenter that
-knows German abbreviations ("z. B.", "Dr.", "usw.") — no ML model to
-download, since all token-level analysis lives in the LLM stage. Splits
-after an ordinal ("im 2. Stock", "am 24. Dezember") are folded back
-automatically. The full ordered list — duplicates included, a film repeats
-its lines — is written as an intermediary artifact: when a word in the
-final list looks wrong, this file is the place to check what the LLM was
-actually given.
+`sentences` produces the full ordered sentence list — duplicates included,
+a film repeats its lines — as an intermediary artifact: when a word in the
+final list looks wrong, this file is the place to check what the word
+extraction was actually given. The backend follows the input artifact:
+
+- **Audio transcripts** are split with
+  [syntok](https://github.com/fnl/syntok), a small pure-Python segmenter
+  that knows German abbreviations ("z. B.", "Dr.", "usw.") — no ML model
+  to download. Splits after an ordinal ("im 2. Stock", "am 24. Dezember")
+  are folded back automatically.
+- **EPUB chapters** go to the OpenAI model one document at a time, raw
+  XHTML and all. For each document the model answers, in a structured
+  form, what the document is (`chapter`, `cover`, `copyright`, `toc`,
+  `index`, ...), whether it is book content at all, and — for content —
+  the sentences of the running text, cleaned of markup, footnote markers
+  and page headers. Non-content documents contribute nothing. The
+  per-chapter verdicts are recorded in the artifact under `"chapters"`,
+  so a wrongly skipped chapter is visible at a glance (and can be forced
+  back in with `--chapters` on the `epub` stage). The same `--llm-model`
+  / `--llm-rpm` / `--llm-concurrency` flags and the same
+  `.partial.jsonl` resume checkpoint as the words stage apply; an
+  oversized chapter file is split at block-tag boundaries and sent in
+  parts.
 
 ### LLM word extraction (`work/sentence-words.json`)
 
@@ -356,12 +377,11 @@ After the LLM, `build` additionally drops:
 - Whisper can hallucinate short phrases during music or silence. The
   built-in VAD filter and disabled text conditioning suppress most of it;
   `--min-count 2` catches stragglers.
-- EPUB is a loose format: chapter titles are guessed from the first heading
-  of each document, and books whose chapters are split across many small
-  files (or merged into one huge file) list accordingly. Check
-  `--list-chapters` before selecting with `--chapters`.
-- Footnotes, page headers and similar furniture are part of the text and are
-  analyzed like prose.
+- EPUB is a loose format: chapter titles in `--list-chapters` are guessed
+  from the first heading of each document, and books whose chapters are
+  split across many small files (or merged into one huge file) list
+  accordingly. The LLM's content-or-not verdict per document is recorded in
+  `work/sentences.json`; a wrong call can be overruled with `--chapters`.
 
 ## Development
 

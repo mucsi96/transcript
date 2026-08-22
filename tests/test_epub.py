@@ -3,9 +3,8 @@ import zipfile
 import pytest
 
 from transcript.epub import (
-    MAX_SEGMENT_CHARS,
     decode_markup,
-    extract_text,
+    extract_chapters,
     format_chapters,
     opf_path,
     parse_chapter_selection,
@@ -13,7 +12,6 @@ from transcript.epub import (
     parse_package,
     read_chapters,
     resolve_href,
-    split_paragraph,
 )
 
 CONTAINER_XML = b"""<?xml version="1.0"?>
@@ -169,24 +167,6 @@ def test_parse_chapter_selection_rejects_bad_specs(spec):
         parse_chapter_selection(spec)
 
 
-def test_split_paragraph_keeps_short_text():
-    assert split_paragraph("Der Hund bellt.") == ["Der Hund bellt."]
-
-
-def test_split_paragraph_splits_at_sentence_ends():
-    text = " ".join(["Satz nummer eins."] * 100)
-    pieces = split_paragraph(text, max_chars=50)
-    assert all(len(p) <= 50 for p in pieces)
-    assert all(p.endswith(".") for p in pieces)
-    assert " ".join(pieces) == text
-
-
-def test_split_paragraph_falls_back_to_word_and_hard_cuts():
-    pieces = split_paragraph("aaaa bbbb " + "x" * 25, max_chars=10)
-    assert all(len(p) <= 10 for p in pieces)
-    assert "".join(pieces).replace(" ", "") == "aaaabbbb" + "x" * 25
-
-
 def test_read_chapters_reading_order(book):
     metadata, chapters = read_chapters(book)
     assert metadata["title"] == "Der Prozess"
@@ -194,7 +174,10 @@ def test_read_chapters_reading_order(book):
     # the cover page has no text but stays listed so indices are stable
     assert chapters[0].chars == 0
     assert chapters[1].title == "Erstes Kapitel"
-    assert chapters[2].paragraphs[-1] == "Ende & Schluss."
+    # the raw markup is kept for the LLM, entities and tags included
+    assert "<em>verleumdet</em>" in chapters[1].html
+    assert "Ende &amp; Schluss." in chapters[2].html
+    assert chapters[2].chars > 0
 
 
 def test_read_chapters_selection(book):
@@ -226,57 +209,35 @@ def test_read_chapters_missing_file(tmp_path):
         read_chapters(tmp_path / "nope.epub")
 
 
-def test_extract_text_payload(book, tmp_path):
-    output = tmp_path / "work" / "transcript.json"
-    payload = extract_text(book, output)
+def test_extract_chapters_payload(book, tmp_path):
+    output = tmp_path / "work" / "chapters.json"
+    payload = extract_chapters(book, output)
     assert output.exists()
     assert payload["source_type"] == "epub"
     assert payload["title"] == "Der Prozess"
     assert payload["author"] == "Franz Kafka"
     assert payload["language"] == "de"
-    assert payload["chapter_count"] == 3
-    # segments are paragraphs, numbered across the whole book
-    assert [s["id"] for s in payload["segments"]] == list(range(len(payload["segments"])))
-    assert payload["segments"][0]["chapter"] == 1
-    assert payload["segments"][0]["text"] == "Erstes Kapitel"
-    assert payload["char_count"] == sum(len(s["text"]) for s in payload["segments"])
-    assert payload["chapters"][0] == {
-        "index": 0, "href": "OEBPS/cover.xhtml", "title": "cover.xhtml",
-        "segments": 0, "chars": 0,
-    }
+    assert payload["total_chapters"] == 3
+    first = payload["chapters"][0]
+    assert (first["index"], first["href"], first["title"], first["chars"]) == (
+        0, "OEBPS/cover.xhtml", "cover.xhtml", 0,
+    )
+    assert "<img" in first["html"]
+    assert "Josef" in payload["chapters"][1]["html"]
+    assert payload["char_count"] == sum(c["chars"] for c in payload["chapters"])
 
 
-def test_extract_text_feeds_the_sentences_stage(book, tmp_path):
-    from transcript.sentences import join_segments
-    from transcript.artifacts import load_json
-
-    payload = extract_text(book, tmp_path / "transcript.json")
-    reloaded = load_json(tmp_path / "transcript.json")
-    assert reloaded == payload
-    text = join_segments([seg["text"] for seg in reloaded["segments"]])
-    assert "Josef K." in text
+def test_extract_chapters_skips_cached_output(book, tmp_path):
+    output = tmp_path / "chapters.json"
+    extract_chapters(book, output)
+    output.write_text('{"schema_version": 1, "chapters": [], "cached": true}')
+    assert extract_chapters(book, output)["cached"] is True
+    assert "cached" not in extract_chapters(book, output, force=True)
 
 
-def test_extract_text_segments_stay_within_the_chunk_limit(tmp_path):
-    huge = "<html><body><div>" + "Ein Satz. " * 40_000 + "</div></body></html>"
-    path = build_epub(tmp_path / "huge.epub", chapters=(huge, CHAPTER_2))
-    payload = extract_text(path, tmp_path / "transcript.json")
-    assert max(len(s["text"]) for s in payload["segments"]) <= MAX_SEGMENT_CHARS
-
-
-def test_extract_text_skips_cached_output(book, tmp_path):
-    output = tmp_path / "transcript.json"
-    extract_text(book, output)
-    output.write_text('{"schema_version": 1, "segments": [], "cached": true}')
-    assert extract_text(book, output)["cached"] is True
-    assert "cached" not in extract_text(book, output, force=True)
-
-
-def test_extract_text_without_any_text(tmp_path):
-    empty = "<html><body></body></html>"
-    path = build_epub(tmp_path / "empty.epub", chapters=(empty, empty))
-    with pytest.raises(ValueError, match="No readable text"):
-        extract_text(path, tmp_path / "transcript.json")
+def test_extract_chapters_with_everything_excluded(book, tmp_path):
+    with pytest.raises(ValueError, match="No readable chapters"):
+        extract_chapters(book, tmp_path / "chapters.json", chapters=frozenset({99}))
 
 
 def test_format_chapters(book):

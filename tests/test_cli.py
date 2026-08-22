@@ -37,9 +37,9 @@ def test_epub_args():
     assert not args.list_chapters
 
 
-def test_epub_defaults_to_the_transcript_artifact():
+def test_epub_defaults_to_the_chapters_artifact():
     args = parse("epub", "buch.epub")
-    assert args.output == Path("work/transcript.json")
+    assert args.output == Path("work/chapters.json")
     assert args.chapters is None
 
 

@@ -1,9 +1,14 @@
-"""Stage 3: sentence splitting with syntok.
+"""Stage 3: the sentence list of the source.
 
-Input is the text artifact of stage 2 — Whisper segments from `transcribe`
-or book paragraphs from `epub`; both are lists of short text segments, so
-this stage does not care which produced them. Segments are joined with
-spaces before splitting, because a Whisper segment can end mid-sentence.
+Two backends produce the same sentences.json artifact, chosen by the
+shape of the stage-2 artifact:
+
+  - Whisper transcripts (a "segments" list) are joined and split with
+    syntok, here. Segments are joined with spaces first, because a
+    Whisper segment can end mid-sentence.
+  - EPUB chapters (a "chapters" list with raw XHTML) go to the LLM, one
+    document per call, which also decides whether a document is book
+    content at all — see chapters.py.
 
 The output is deliberately just the ordered list of sentence strings
 (duplicates included — a film repeats its lines, and the counts matter
@@ -87,12 +92,28 @@ def split_sentences(
     transcript_path: Path,
     output: Path,
     *,
+    model: str | None = None,
+    rpm: int | None = None,
+    concurrency: int | None = None,
     force: bool = False,
 ) -> dict:
     if should_skip(output, force):
         return load_json(output)
 
     transcript = load_json(transcript_path)
+    if "segments" not in transcript and isinstance(transcript.get("chapters"), list):
+        from .chapters import extract_chapter_sentences
+        from .llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+
+        return extract_chapter_sentences(
+            transcript_path,
+            output,
+            model=model or DEFAULT_LLM_MODEL,
+            rpm=rpm or DEFAULT_RPM,
+            concurrency=concurrency or DEFAULT_CONCURRENCY,
+            force=force,
+        )
+
     segments = require_list(transcript, "segments", transcript_path)
     try:
         segment_texts = [seg["text"] for seg in segments]
