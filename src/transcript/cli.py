@@ -68,15 +68,9 @@ def _add_transcribe_opts(p: argparse.ArgumentParser) -> None:
 
 
 def _add_sentences(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("sentences", help="Split the transcript into sentences with spaCy")
+    p = sub.add_parser("sentences", help="Split the transcript into sentences")
     p.add_argument("transcript", type=Path)
     p.add_argument("-o", "--output", type=Path, default=Path("work/sentences.json"))
-    _add_sentences_opts(p)
-
-
-def _add_sentences_opts(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--spacy-model", default="de_core_news_lg",
-                   help="German spaCy model (default: de_core_news_lg; de_core_news_md is lighter)")
 
 
 def _add_words(sub: argparse._SubParsersAction) -> None:
@@ -126,7 +120,6 @@ def _add_run(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--workdir", type=Path, default=Path("work"))
     _add_epub_opts(p)
     _add_transcribe_opts(p)
-    _add_sentences_opts(p)
     _add_words_opts(p)
     _add_build_opts(p)
 
@@ -216,7 +209,7 @@ def _cmd_text(args: argparse.Namespace, source: Path, output: Path) -> None:
 def _cmd_sentences(args: argparse.Namespace, transcript: Path, output: Path) -> None:
     from .sentences import split_sentences
 
-    split_sentences(transcript, output, model_name=args.spacy_model, force=args.force)
+    split_sentences(transcript, output, force=args.force)
 
 
 def _cmd_words(args: argparse.Namespace, sentences: Path, output: Path) -> None:

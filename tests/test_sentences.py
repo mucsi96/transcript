@@ -1,33 +1,61 @@
-from types import SimpleNamespace
-
 import pytest
 
-from transcript.sentences import chunk_segments, doc_to_sentences, sentences_from_payload
+from transcript.sentences import (
+    join_segments,
+    merge_ordinal_splits,
+    sentences_from_payload,
+    split_text,
+)
 
 
-def test_doc_to_sentences_normalizes_whitespace():
-    class FakeSpan:
-        def __init__(self, text):
-            self.text = text
-
-    doc = SimpleNamespace(sents=[FakeSpan("Der  Hund . "), FakeSpan("Er läuft.")])
-    assert doc_to_sentences(doc) == ["Der Hund .", "Er läuft."]
+def test_join_segments_strips_and_skips_empty():
+    assert join_segments(["Der Hund ", "", "  ", "bellt laut."]) == "Der Hund bellt laut."
 
 
-def test_doc_to_sentences_skips_empty_sentences():
-    doc = SimpleNamespace(sents=[SimpleNamespace(text="   ")])
-    assert doc_to_sentences(doc) == []
+def test_split_text_basic_german():
+    assert split_text("Der Hund läuft schnell. Anna wohnt in Berlin.") == [
+        "Der Hund läuft schnell.",
+        "Anna wohnt in Berlin.",
+    ]
 
 
-def test_chunk_segments_splits_at_boundaries():
-    segments = ["a" * 30, "b" * 30, "c" * 30]
-    chunks = chunk_segments(segments, max_chars=70)
-    assert chunks == ["a" * 30 + " " + "b" * 30, "c" * 30]
+def test_split_text_keeps_abbreviations_together():
+    assert split_text("Das ist z. B. ein Hund. Dr. Müller kommt heute.") == [
+        "Das ist z. B. ein Hund.",
+        "Dr. Müller kommt heute.",
+    ]
 
 
-def test_chunk_segments_skips_empty_and_never_splits_a_segment():
-    segments = ["", "  ", "x" * 100]
-    assert chunk_segments(segments, max_chars=10) == ["x" * 100]
+def test_split_text_survives_ordinals_before_nouns():
+    # syntok splits after "2." / "24."; merge_ordinal_splits folds it back.
+    assert split_text("Er wohnt im 2. Stock. Das Haus ist alt.") == [
+        "Er wohnt im 2. Stock.",
+        "Das Haus ist alt.",
+    ]
+    assert split_text("Heute ist der 24. Dezember. Wir feiern.") == [
+        "Heute ist der 24. Dezember.",
+        "Wir feiern.",
+    ]
+
+
+def test_split_text_years_stay_sentence_ends():
+    assert split_text("Das war 1998. Dann kam er.") == ["Das war 1998.", "Dann kam er."]
+
+
+def test_split_text_normalizes_whitespace():
+    assert split_text("Der  Hund\n bellt.  Er  schläft.") == [
+        "Der Hund bellt.",
+        "Er schläft.",
+    ]
+
+
+def test_merge_ordinal_splits_only_merges_short_numbers():
+    assert merge_ordinal_splits(["Am 3.", "Oktober."]) == ["Am 3. Oktober."]
+    assert merge_ordinal_splits(["Das war 1998.", "Dann kam er."]) == [
+        "Das war 1998.",
+        "Dann kam er.",
+    ]
+    assert merge_ordinal_splits([]) == []
 
 
 def test_sentences_from_payload_roundtrip():
@@ -51,15 +79,25 @@ def test_sentences_from_payload_reports_a_malformed_record():
     assert "--force" in str(excinfo.value)
 
 
-def test_real_german_sentence_split_smoke():
-    spacy = pytest.importorskip("spacy")
-    if not spacy.util.is_package("de_core_news_lg"):
-        pytest.skip("de_core_news_lg not installed")
-    from transcript.sentences import load_nlp
+def test_split_sentences_stage_writes_the_artifact(tmp_path):
+    from transcript.artifacts import save_json
+    from transcript.sentences import split_sentences
 
-    nlp = load_nlp("de_core_news_lg")
-    doc = nlp("Der Hund läuft schnell. Anna wohnt in Berlin.")
-    assert doc_to_sentences(doc) == [
-        "Der Hund läuft schnell.",
-        "Anna wohnt in Berlin.",
-    ]
+    transcript = tmp_path / "transcript.json"
+    save_json(
+        transcript,
+        {
+            "schema_version": 1,
+            "segments": [
+                {"text": "Der Hund läuft"},
+                {"text": "schnell. Er bellt."},
+            ],
+        },
+    )
+    out = tmp_path / "sentences.json"
+    payload = split_sentences(transcript, out)
+    assert payload["segmenter"] == "syntok"
+    assert payload["total_sentences"] == 2
+    # the mid-sentence segment boundary does not split the sentence
+    assert payload["sentences"] == ["Der Hund läuft schnell.", "Er bellt."]
+    assert out.exists()

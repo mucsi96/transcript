@@ -11,7 +11,7 @@ DVD ──[MakeMKV on Windows]────────> movie.mkv              (
     ──[transcribe: faster-whisper]─┐
                                    ├> work/transcript.json (text segments + metadata)
 EPUB ─[epub: spine -> paragraphs]──┘
-    ──[sentences: spaCy]───────────> work/sentences.json      (every sentence of the source)
+    ──[sentences: syntok]──────────> work/sentences.json      (every sentence of the source)
     ──[words: OpenAI, per sentence]> work/sentence-words.json (dictionary-form words per sentence)
     ──[build: match + aggregate]───┬> work/known-words.json   (what the API answered, for reference)
                                    └> work/words.json         (words to learn + example sentences)
@@ -37,17 +37,16 @@ nix develop
 ```
 
 That is all: the dev shell provides Python 3.11 and ffmpeg, then on first
-entry creates a `.venv`, runs `pip install -e ".[dev]"` (faster-whisper,
-spaCy, openai, pytest), and downloads the `de_core_news_lg` German spaCy model
-(~570 MB). Later entries just activate the existing venv. Nix provides the
-system pieces; Python packages stay in the venv because faster-whisper and
-the spaCy German models don't package cleanly in nixpkgs.
+entry creates a `.venv` and runs `pip install -e ".[dev]"` (faster-whisper,
+syntok, openai, pytest). Later entries just activate the existing venv. Nix
+provides the system pieces; Python packages stay in the venv because
+faster-whisper doesn't package cleanly in nixpkgs.
 
 On the Windows side you need [MakeMKV](https://www.makemkv.com/) for the
 DVD rip itself.
 
 Without Nix: install ffmpeg and Python ≥ 3.10 yourself, then in a venv run
-`pip install -e ".[dev]"` and `python -m spacy download de_core_news_lg`.
+`pip install -e ".[dev]"`.
 
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
 `~/.cache/huggingface`.
@@ -134,9 +133,8 @@ transcript epub ~/books/buch.epub -o work/transcript.json
 
 Only the spine's XHTML documents are read, in reading order; the navigation
 document, the NCX table of contents, images, `<script>` and `<style>` are
-skipped. One segment is one paragraph, so the spaCy chunker gets the same
-sentence-aligned units it gets from Whisper. Chapter titles come from each
-document's first heading.
+skipped. One segment is one paragraph, the same shape the Whisper stage
+produces. Chapter titles come from each document's first heading.
 
 Options:
 
@@ -169,12 +167,15 @@ transcript run ~/books/buch.epub --workdir work --chapters 3-20
 
 ### Sentences (`work/sentences.json`)
 
-`sentences` splits the transcript into sentences with spaCy (only the
-sentence-boundary components are loaded; tagging and lemmatization moved to
-the LLM) and writes the full ordered list — duplicates included, a film
-repeats its lines — as an intermediary artifact. When a word in the final
-list looks wrong, this file is the place to check what the LLM was actually
-given.
+`sentences` splits the transcript into sentences with
+[syntok](https://github.com/fnl/syntok), a small pure-Python segmenter that
+knows German abbreviations ("z. B.", "Dr.", "usw.") — no ML model to
+download, since all token-level analysis lives in the LLM stage. Splits
+after an ordinal ("im 2. Stock", "am 24. Dezember") are folded back
+automatically. The full ordered list — duplicates included, a film repeats
+its lines — is written as an intermediary artifact: when a word in the
+final list looks wrong, this file is the place to check what the LLM was
+actually given.
 
 ### LLM word extraction (`work/sentence-words.json`)
 
@@ -365,8 +366,8 @@ After the LLM, `build` additionally drops:
 ## Development
 
 ```bash
-pytest          # unit tests; no DVD, EPUB, ffmpeg, Whisper model or spaCy model needed
+pytest          # unit tests; no DVD, EPUB, ffmpeg, Whisper model or API key needed
 ```
 
-The spaCy-dependent smoke test auto-skips when `de_core_news_lg` is not
-installed.
+The LLM stage is tested against a stub client, so the tests make no API
+calls and need no `OPENAI_API_KEY`.

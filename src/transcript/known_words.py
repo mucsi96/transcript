@@ -71,8 +71,8 @@ class KnownWordsError(RuntimeError):
 # token, and are left alone.
 ARTICLES = frozenset({"der", "die", "das", "ein", "eine"})
 
-# Cards mark reflexive verbs as "ausruhen (sich)" or "sich kümmern"; spaCy
-# lemmatizes the verb alone.
+# Cards mark reflexive verbs as "ausruhen (sich)" or "sich kümmern"; the
+# LLM stage returns the bare infinitive.
 REFLEXIVE_PRONOUN = "sich"
 
 # " (sich)", " (Pl)", "(e)" — a card's parenthetical aside.

@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "transcript"
 version = "0.1.0"
-description = "Extract German vocabulary from a DVD movie or an EPUB book: MakeMKV/ffmpeg -> FLAC -> Whisper large-v3 (or EPUB -> text) -> spaCy -> flash-card word list"
+description = "Extract German vocabulary from a DVD movie or an EPUB book: MakeMKV/ffmpeg -> FLAC -> Whisper large-v3 (or EPUB -> text) -> sentences -> LLM -> flash-card word list"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = [
     "faster-whisper>=1.1,<2",
-    "spacy>=3.8,<3.9",
+    "syntok>=1.4,<2",
     "httpx>=0.27,<1",
     "openai>=1.60,<3",
     "python-dotenv>=1,<2",

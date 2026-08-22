@@ -79,7 +79,6 @@ def test_sentences_defaults():
     assert args.command == "sentences"
     assert args.transcript == Path("work/transcript.json")
     assert args.output == Path("work/sentences.json")
-    assert args.spacy_model == "de_core_news_lg"
 
 
 def test_words_defaults():
@@ -112,14 +111,13 @@ def test_build_min_count():
 def test_run_accepts_all_stage_options():
     args = parse(
         "run", "movie.flac", "--workdir", "w",
-        "--device", "cpu", "--spacy-model", "de_core_news_md",
+        "--device", "cpu",
         "--llm-model", "gpt-5", "--llm-rpm", "30",
         "--min-count", "2",
     )
     assert args.source == Path("movie.flac")
     assert args.workdir == Path("w")
     assert args.device == "cpu"
-    assert args.spacy_model == "de_core_news_md"
     assert args.llm_model == "gpt-5"
     assert args.llm_rpm == 30
     assert args.min_count == 2
