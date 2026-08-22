@@ -123,7 +123,7 @@ def test_extract_chapter_sentences_skips_non_content(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_make_client", lambda concurrency: client)
 
     out = tmp_path / "sentences.json"
-    payload = extract_chapter_sentences(chapters, out, model="test-model")
+    payload = extract_chapter_sentences(chapters, out)
 
     assert payload["segmenter"] == "llm"
     assert payload["llm_model"] == "test-model"
@@ -230,6 +230,6 @@ def test_sentences_stage_dispatches_chapters_to_the_llm(tmp_path, monkeypatch):
     client = FakeClient({"kapitel1.xhtml": CONTENT})
     monkeypatch.setattr(llm, "_make_client", lambda concurrency: client)
 
-    payload = split_sentences(chapters, tmp_path / "sentences.json", model="test-model")
+    payload = split_sentences(chapters, tmp_path / "sentences.json")
     assert payload["segmenter"] == "llm"
     assert payload["sentences"] == ["Der Hund bellt.", "Er fängt gerade an."]

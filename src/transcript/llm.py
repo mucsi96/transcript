@@ -47,8 +47,8 @@ from .sentences import sentences_from_payload
 log = logging.getLogger(__name__)
 
 API_KEY_ENV_VAR = "OPENAI_API_KEY"
+MODEL_ENV_VAR = "OPENAI_MODEL"
 
-DEFAULT_LLM_MODEL = "gpt-5-mini"
 DEFAULT_RPM = 60
 DEFAULT_CONCURRENCY = 8
 
@@ -143,6 +143,17 @@ class LLMError(RuntimeError):
 
 class WordExtractionError(LLMError):
     """The word-extraction stage's flavor of LLMError."""
+
+
+def require_model() -> str:
+    """The OpenAI model for the LLM stages; there is no built-in default."""
+    model = os.environ.get(MODEL_ENV_VAR)
+    if not model:
+        raise LLMError(
+            f"{MODEL_ENV_VAR} is not set (configure it in .env); the LLM "
+            f"stages need an OpenAI model name."
+        )
+    return model
 
 
 @dataclass(frozen=True)
@@ -399,7 +410,6 @@ def extract_words(
     sentences_path: Path,
     output: Path,
     *,
-    model: str = DEFAULT_LLM_MODEL,
     rpm: int = DEFAULT_RPM,
     concurrency: int = DEFAULT_CONCURRENCY,
     force: bool = False,
@@ -407,6 +417,7 @@ def extract_words(
     if should_skip(output, force):
         return load_json(output)
 
+    model = require_model()
     payload = load_json(sentences_path)
     sentences = sentences_from_payload(payload, sentences_path)
     counts = Counter(sentences)  # insertion-ordered: first-seen order

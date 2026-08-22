@@ -3,6 +3,13 @@ import pytest
 from transcript.llm import SentenceWords, WordRecord
 
 
+@pytest.fixture(autouse=True)
+def openai_model_env(monkeypatch):
+    """The LLM stages read their model from OPENAI_MODEL; pin it so the
+    tests are hermetic whatever the developer's shell has."""
+    monkeypatch.setenv("OPENAI_MODEL", "test-model")
+
+
 @pytest.fixture
 def make_word():
     def _make(lemma="Hund", word_type="noun", article=None):

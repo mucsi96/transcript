@@ -82,13 +82,12 @@ def test_sentences_defaults():
 
 
 def test_words_defaults():
-    from transcript.llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+    from transcript.llm import DEFAULT_CONCURRENCY, DEFAULT_RPM
 
     args = parse("words", "work/sentences.json")
     assert args.command == "words"
     assert args.sentences == Path("work/sentences.json")
     assert args.output == Path("work/sentence-words.json")
-    assert args.llm_model == DEFAULT_LLM_MODEL
     assert args.llm_rpm == DEFAULT_RPM
     assert args.llm_concurrency == DEFAULT_CONCURRENCY
 
@@ -96,9 +95,8 @@ def test_words_defaults():
 def test_words_rate_limit_options():
     args = parse(
         "words", "work/sentences.json",
-        "--llm-model", "gpt-5", "--llm-rpm", "30", "--llm-concurrency", "4",
+        "--llm-rpm", "30", "--llm-concurrency", "4",
     )
-    assert args.llm_model == "gpt-5"
     assert args.llm_rpm == 30
     assert args.llm_concurrency == 4
 
@@ -112,13 +110,12 @@ def test_run_accepts_all_stage_options():
     args = parse(
         "run", "movie.flac", "--workdir", "w",
         "--device", "cpu",
-        "--llm-model", "gpt-5", "--llm-rpm", "30",
+        "--llm-rpm", "30",
         "--min-count", "2",
     )
     assert args.source == Path("movie.flac")
     assert args.workdir == Path("w")
     assert args.device == "cpu"
-    assert args.llm_model == "gpt-5"
     assert args.llm_rpm == 30
     assert args.min_count == 2
 
