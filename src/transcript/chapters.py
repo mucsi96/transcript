@@ -36,13 +36,13 @@ from . import llm
 from .artifacts import SCHEMA_VERSION, load_json, require_list, save_json, should_skip
 from .llm import (
     DEFAULT_CONCURRENCY,
-    DEFAULT_LLM_MODEL,
     DEFAULT_RPM,
     LLMError,
     RateLimiter,
     checkpoint_path,
     completion_json,
     read_checkpoint,
+    require_model,
 )
 
 log = logging.getLogger(__name__)
@@ -305,7 +305,6 @@ def extract_chapter_sentences(
     chapters_path: Path,
     output: Path,
     *,
-    model: str = DEFAULT_LLM_MODEL,
     rpm: int = DEFAULT_RPM,
     concurrency: int = DEFAULT_CONCURRENCY,
     force: bool = False,
@@ -314,6 +313,7 @@ def extract_chapter_sentences(
     if should_skip(output, force):
         return load_json(output)
 
+    model = require_model()
     payload = load_json(chapters_path)
     chapters = require_list(payload, "chapters", chapters_path)
     for chapter in chapters:

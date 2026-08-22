@@ -91,10 +91,8 @@ def _add_words(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_llm_opts(p: argparse.ArgumentParser) -> None:
-    from .llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+    from .llm import DEFAULT_CONCURRENCY, DEFAULT_RPM
 
-    p.add_argument("--llm-model", default=DEFAULT_LLM_MODEL,
-                   help=f"OpenAI model for word extraction (default: {DEFAULT_LLM_MODEL})")
     p.add_argument("--llm-rpm", type=int, default=DEFAULT_RPM, metavar="N",
                    help=f"client-side request-per-minute cap, matched to your "
                         f"API tier's rate limit (default: {DEFAULT_RPM})")
@@ -219,7 +217,6 @@ def _cmd_sentences(args: argparse.Namespace, transcript: Path, output: Path) -> 
     split_sentences(
         transcript,
         output,
-        model=args.llm_model,
         rpm=args.llm_rpm,
         concurrency=args.llm_concurrency,
         force=args.force,
@@ -232,7 +229,6 @@ def _cmd_words(args: argparse.Namespace, sentences: Path, output: Path) -> None:
     extract_words(
         sentences,
         output,
-        model=args.llm_model,
         rpm=args.llm_rpm,
         concurrency=args.llm_concurrency,
         force=args.force,

@@ -192,8 +192,8 @@ extraction was actually given. The backend follows the input artifact:
   and page headers. Non-content documents contribute nothing. The
   per-chapter verdicts are recorded in the artifact under `"chapters"`,
   so a wrongly skipped chapter is visible at a glance (and can be forced
-  back in with `--chapters` on the `epub` stage). The same `--llm-model`
-  / `--llm-rpm` / `--llm-concurrency` flags and the same
+  back in with `--chapters` on the `epub` stage). The same `OPENAI_MODEL`
+  model, `--llm-rpm` / `--llm-concurrency` flags and the same
   `.partial.jsonl` resume checkpoint as the words stage apply; an
   oversized chapter file is split at block-tag boundaries and sent in
   parts.
@@ -203,16 +203,17 @@ extraction was actually given. The backend follows the input artifact:
 `words` sends each **distinct** sentence to an OpenAI model once and asks
 for every word worth learning in its dictionary form: verbs as infinitives
 (separable verbs reunited), nouns in the nominative singular with their
-article, adjectives in the base form. The API key comes from `.env`:
+article, adjectives in the base form. The API key and the model both come
+from `.env`; the stage refuses to run without them:
 
 ```bash
 OPENAI_API_KEY=sk-your-key
+OPENAI_MODEL=gpt-5-mini
 ```
 
 One call per sentence means thousands of calls per film, so the stage runs
 them concurrently while respecting the provider's rate limits:
 
-- `--llm-model NAME` — OpenAI model (default: `gpt-5-mini`).
 - `--llm-rpm N` — client-side requests-per-minute cap (default: 60). Match
   it to your [API tier's rate limit](https://platform.openai.com/docs/guides/rate-limits);
   the SDK's own retry-with-backoff still catches any 429 that slips through.
@@ -373,7 +374,7 @@ After the LLM, `build` additionally drops:
   request, not a guarantee. The per-sentence answers stay inspectable in
   `work/sentence-words.json` when something looks off.
 - One API call per distinct sentence costs real money on a large source;
-  `--llm-model` picks the trade-off between price and judgement.
+  `OPENAI_MODEL` picks the trade-off between price and judgement.
 - Whisper can hallucinate short phrases during music or silence. The
   built-in VAD filter and disabled text conditioning suppress most of it;
   `--min-count 2` catches stragglers.

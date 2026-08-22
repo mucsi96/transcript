@@ -7,6 +7,7 @@ import pytest
 import transcript.llm as llm
 from transcript.artifacts import save_json
 from transcript.llm import (
+    LLMError,
     RateLimiter,
     SentenceWords,
     WordExtractionError,
@@ -163,7 +164,7 @@ def test_extract_words_calls_once_per_distinct_sentence(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "_make_client", lambda concurrency: client)
 
     out = tmp_path / "sentence-words.json"
-    payload = extract_words(sentences, out, model="test-model")
+    payload = extract_words(sentences, out)
 
     assert sorted(client.calls) == ["Der Hund bellt.", "Er fängt an."]
     assert payload["llm_model"] == "test-model"
@@ -226,6 +227,21 @@ def test_extract_words_rejects_an_empty_sentence_list(tmp_path):
     sentences = write_sentences(tmp_path, [])
     with pytest.raises(ValueError, match="no sentences"):
         extract_words(sentences, tmp_path / "out.json")
+
+
+def test_extract_words_requires_the_model_env_var(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_MODEL")
+    sentences = write_sentences(tmp_path, ["Der Hund bellt."])
+    with pytest.raises(LLMError, match="OPENAI_MODEL is not set"):
+        extract_words(sentences, tmp_path / "out.json")
+
+
+def test_extract_words_cached_artifact_needs_no_model(tmp_path, monkeypatch):
+    monkeypatch.delenv("OPENAI_MODEL")
+    out = tmp_path / "sentence-words.json"
+    save_json(out, {"schema_version": 1, "sentences": []})
+    payload = extract_words(tmp_path / "missing.json", out)
+    assert payload["sentences"] == []
 
 
 # ------------------------------------------------------------ payload IO

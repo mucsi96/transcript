@@ -92,7 +92,6 @@ def split_sentences(
     transcript_path: Path,
     output: Path,
     *,
-    model: str | None = None,
     rpm: int | None = None,
     concurrency: int | None = None,
     force: bool = False,
@@ -103,12 +102,11 @@ def split_sentences(
     transcript = load_json(transcript_path)
     if "segments" not in transcript and isinstance(transcript.get("chapters"), list):
         from .chapters import extract_chapter_sentences
-        from .llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+        from .llm import DEFAULT_CONCURRENCY, DEFAULT_RPM
 
         return extract_chapter_sentences(
             transcript_path,
             output,
-            model=model or DEFAULT_LLM_MODEL,
             rpm=rpm or DEFAULT_RPM,
             concurrency=concurrency or DEFAULT_CONCURRENCY,
             force=force,
