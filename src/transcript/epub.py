@@ -6,10 +6,13 @@ gives the reading order. Only the spine's XHTML documents are read, in that
 order; the navigation document, the NCX table of contents and images are
 skipped.
 
-The output artifact has the same shape the transcribe stage produces — a
-list of text segments — so the later stages treat a book exactly like a
-film. A segment is a paragraph here and a Whisper segment there: both are
-small units the sentences stage joins and splits into sentences.
+The output artifact carries each spine document's **raw XHTML**: the
+sentences stage sends one chapter at a time to an LLM, which decides
+whether the document is a content chapter at all (as opposed to a cover,
+title page, copyright notice, table of contents ...) and extracts the
+sentences from the markup itself. This stage therefore only unpacks the
+book; it does not interpret the HTML beyond guessing a chapter title and
+character count for --list-chapters.
 
 Only DRM-free EPUBs can be read; encrypted ones are reported as such.
 """
@@ -47,13 +50,7 @@ BLOCK_TAGS = frozenset({
 SKIP_TAGS = frozenset({"head", "script", "style", "svg"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-# Badly converted EPUBs sometimes put a whole chapter in a single <div>
-# without any <p>; keep segments bounded so the text artifact stays
-# inspectable.
-MAX_SEGMENT_CHARS = 20_000
-
 _XML_ENCODING = re.compile(rb"""^<\?xml[^>]*?encoding=["']([\w.-]+)["']""", re.IGNORECASE)
-_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
 @dataclass(frozen=True)
@@ -74,14 +71,14 @@ class Package:
 
 @dataclass(frozen=True)
 class Chapter:
+    """One spine document: its raw XHTML plus the title and prose size
+    guessed from it (for --list-chapters; the LLM judges the real thing)."""
+
     index: int
     href: str
     title: str
-    paragraphs: tuple[str, ...]
-
-    @property
-    def chars(self) -> int:
-        return sum(len(p) for p in self.paragraphs)
+    html: str
+    chars: int
 
 
 def _local(tag) -> str:
@@ -277,49 +274,6 @@ def parse_chapter_selection(spec: str) -> frozenset[int]:
     return frozenset(selected)
 
 
-def _split_words(text: str, max_chars: int) -> list[str]:
-    pieces: list[str] = []
-    current = ""
-    for word in text.split():
-        while len(word) > max_chars:  # a single monster "word": hard-cut it
-            if current:
-                pieces.append(current)
-                current = ""
-            pieces.append(word[:max_chars])
-            word = word[max_chars:]
-        if not current:
-            current = word
-        elif len(current) + 1 + len(word) <= max_chars:
-            current += " " + word
-        else:
-            pieces.append(current)
-            current = word
-    if current:
-        pieces.append(current)
-    return pieces
-
-
-def split_paragraph(text: str, max_chars: int = MAX_SEGMENT_CHARS) -> list[str]:
-    """Split an oversized paragraph at sentence ends, falling back to word
-    boundaries. Paragraphs within the limit are returned unchanged."""
-    if len(text) <= max_chars:
-        return [text]
-    pieces: list[str] = []
-    current = ""
-    for sentence in _SENTENCE_END.split(text):
-        for part in _split_words(sentence, max_chars):
-            if not current:
-                current = part
-            elif len(current) + 1 + len(part) <= max_chars:
-                current += " " + part
-            else:
-                pieces.append(current)
-                current = part
-    if current:
-        pieces.append(current)
-    return pieces
-
-
 def read_chapters(source: Path, selection: frozenset[int] | None = None) -> tuple[dict, list[Chapter]]:
     """Read the spine's content documents in reading order. Chapters that
     carry no text (cover pages) are kept with zero characters so
@@ -357,13 +311,15 @@ def read_chapters(source: Path, selection: frozenset[int] | None = None) -> tupl
             except KeyError:
                 log.warning("spine item %s is missing from the archive, skipping", item.href)
                 continue
-            title, paragraphs = parse_document(decode_markup(markup))
+            html = decode_markup(markup)
+            title, paragraphs = parse_document(html)
             chapters.append(
                 Chapter(
                     index=item.index,
                     href=item.href,
                     title=title or posixpath.basename(item.href),
-                    paragraphs=tuple(paragraphs),
+                    html=html,
+                    chars=sum(len(p) for p in paragraphs),
                 )
             )
 
@@ -380,7 +336,7 @@ def format_chapters(chapters: list[Chapter]) -> str:
     return "\n".join(lines) if lines else "  no readable chapters found"
 
 
-def extract_text(
+def extract_chapters(
     source: Path,
     output: Path,
     *,
@@ -391,33 +347,16 @@ def extract_text(
         return load_json(output)
 
     metadata, chapter_list = read_chapters(source, chapters)
-
-    segments: list[dict] = []
-    chapter_records: list[dict] = []
-    for chapter in chapter_list:
-        texts = [piece for para in chapter.paragraphs for piece in split_paragraph(para)]
-        chapter_records.append(
-            {
-                "index": chapter.index,
-                "href": chapter.href,
-                "title": chapter.title,
-                "segments": len(texts),
-                "chars": chapter.chars,
-            }
-        )
-        for text in texts:
-            segments.append({"id": len(segments), "chapter": chapter.index, "text": text})
-
-    if not segments:
+    if not chapter_list:
         raise ValueError(
-            f"No readable text found in {source}. Run with --list-chapters to "
-            "see the spine; a --chapters selection may have excluded everything."
+            f"No readable chapters found in {source}. Run with --list-chapters "
+            "to see the spine; a --chapters selection may have excluded everything."
         )
 
-    total_chars = sum(len(s["text"]) for s in segments)
+    total_chars = sum(c.chars for c in chapter_list)
     log.info(
-        "Read %d chapter(s), %d paragraph(s), %d characters from %s",
-        len(chapter_records), len(segments), total_chars, source,
+        "Read %d chapter document(s), %d prose characters from %s",
+        len(chapter_list), total_chars, source,
     )
 
     payload = {
@@ -427,10 +366,18 @@ def extract_text(
         "title": metadata.get("title"),
         "author": metadata.get("author"),
         "language": metadata.get("language"),
-        "chapter_count": len(chapter_records),
+        "total_chapters": len(chapter_list),
         "char_count": total_chars,
-        "chapters": chapter_records,
-        "segments": segments,
+        "chapters": [
+            {
+                "index": c.index,
+                "href": c.href,
+                "title": c.title,
+                "chars": c.chars,
+                "html": c.html,
+            }
+            for c in chapter_list
+        ],
     }
     save_json(output, payload)
     return payload

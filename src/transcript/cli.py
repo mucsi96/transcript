@@ -34,19 +34,20 @@ def _add_extract(sub: argparse._SubParsersAction) -> None:
 
 
 def _add_epub(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("epub", help="Extract the text of an EPUB book (skips transcribe)")
+    p = sub.add_parser("epub", help="Unpack an EPUB book's chapters (skips transcribe)")
     p.add_argument("source", type=Path, help="EPUB file, e.g. ~/books/buch.epub")
     p.add_argument("--list-chapters", action="store_true",
                    help="list the spine documents (index, title, size) and exit; "
                         "honours --chapters")
-    p.add_argument("-o", "--output", type=Path, default=Path("work/transcript.json"))
+    p.add_argument("-o", "--output", type=Path, default=Path("work/chapters.json"))
     _add_epub_opts(p)
 
 
 def _add_epub_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--chapters", metavar="SPEC",
                    help="only read these spine chapters, e.g. '3-20,25' "
-                        "(0-based, see --list-chapters); default: all of them")
+                        "(0-based, see --list-chapters); default: all of them — "
+                        "the sentences stage skips non-content documents itself")
 
 
 def _add_transcribe(sub: argparse._SubParsersAction) -> None:
@@ -68,9 +69,15 @@ def _add_transcribe_opts(p: argparse.ArgumentParser) -> None:
 
 
 def _add_sentences(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("sentences", help="Split the transcript into sentences")
-    p.add_argument("transcript", type=Path)
+    p = sub.add_parser(
+        "sentences",
+        help="Produce the sentence list: syntok for a transcript, the LLM "
+             "(chapter by chapter) for EPUB chapters",
+    )
+    p.add_argument("transcript", type=Path,
+                   help="transcript.json (audio) or chapters.json (EPUB)")
     p.add_argument("-o", "--output", type=Path, default=Path("work/sentences.json"))
+    _add_llm_opts(p)
 
 
 def _add_words(sub: argparse._SubParsersAction) -> None:
@@ -80,10 +87,10 @@ def _add_words(sub: argparse._SubParsersAction) -> None:
     )
     p.add_argument("sentences", type=Path)
     p.add_argument("-o", "--output", type=Path, default=Path("work/sentence-words.json"))
-    _add_words_opts(p)
+    _add_llm_opts(p)
 
 
-def _add_words_opts(p: argparse.ArgumentParser) -> None:
+def _add_llm_opts(p: argparse.ArgumentParser) -> None:
     from .llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
 
     p.add_argument("--llm-model", default=DEFAULT_LLM_MODEL,
@@ -120,7 +127,7 @@ def _add_run(sub: argparse._SubParsersAction) -> None:
     p.add_argument("--workdir", type=Path, default=Path("work"))
     _add_epub_opts(p)
     _add_transcribe_opts(p)
-    _add_words_opts(p)
+    _add_llm_opts(p)
     _add_build_opts(p)
 
 
@@ -168,7 +175,7 @@ def _cmd_extract(args: argparse.Namespace) -> None:
 
 
 def _cmd_epub(args: argparse.Namespace, source: Path, output: Path) -> None:
-    from .epub import extract_text, format_chapters, parse_chapter_selection, read_chapters
+    from .epub import extract_chapters, format_chapters, parse_chapter_selection, read_chapters
 
     selection = parse_chapter_selection(args.chapters) if args.chapters else None
 
@@ -178,7 +185,7 @@ def _cmd_epub(args: argparse.Namespace, source: Path, output: Path) -> None:
         print(format_chapters(chapters))
         return
 
-    extract_text(source, output, chapters=selection, force=args.force)
+    extract_chapters(source, output, chapters=selection, force=args.force)
 
 
 def _cmd_transcribe(args: argparse.Namespace, audio: Path, output: Path) -> None:
@@ -209,7 +216,14 @@ def _cmd_text(args: argparse.Namespace, source: Path, output: Path) -> None:
 def _cmd_sentences(args: argparse.Namespace, transcript: Path, output: Path) -> None:
     from .sentences import split_sentences
 
-    split_sentences(transcript, output, force=args.force)
+    split_sentences(
+        transcript,
+        output,
+        model=args.llm_model,
+        rpm=args.llm_rpm,
+        concurrency=args.llm_concurrency,
+        force=args.force,
+    )
 
 
 def _cmd_words(args: argparse.Namespace, sentences: Path, output: Path) -> None:
@@ -333,12 +347,12 @@ def main(argv: list[str] | None = None) -> int:
             _cmd_build(args, args.sentence_words, args.output)
         elif args.command == "run":
             workdir: Path = args.workdir
-            transcript_json = workdir / "transcript.json"
+            text_json = workdir / ("chapters.json" if is_epub(args.source) else "transcript.json")
             sentences_json = workdir / "sentences.json"
             sentence_words_json = workdir / "sentence-words.json"
             words_json = workdir / "words.json"
-            _cmd_text(args, args.source, transcript_json)
-            _cmd_sentences(args, transcript_json, sentences_json)
+            _cmd_text(args, args.source, text_json)
+            _cmd_sentences(args, text_json, sentences_json)
             _cmd_words(args, sentences_json, sentence_words_json)
             _cmd_build(args, sentence_words_json, words_json)
     except KeyboardInterrupt:
