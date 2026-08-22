@@ -1,17 +1,21 @@
-"""Stage 3: spaCy analysis — sentence splitting, lemmatization, POS, NER.
+"""Stage 3: sentence splitting with spaCy.
 
 Input is the text artifact of stage 2 — Whisper segments from `transcribe`
 or book paragraphs from `epub`; both are lists of short text segments, so
 this stage does not care which produced them.
 
-spaCy objects are converted to plain dataclasses immediately; the later
-stages (matching, filtering, aggregation) never touch spaCy.
+The output is deliberately just the ordered list of sentence strings
+(duplicates included — a film repeats its lines, and the counts matter
+later): an intermediary artifact that is easy to eyeball when a word in
+the final list looks wrong. Everything token-level (lemmas, word types)
+moved to the LLM stage, which sees whole sentences and can therefore
+reunite German separable verbs ("Er fängt ... an" -> "anfangen") that a
+per-token tagger takes apart.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .artifacts import SCHEMA_VERSION, load_json, require_list, save_json, should_skip
@@ -20,6 +24,11 @@ log = logging.getLogger(__name__)
 
 DEFAULT_SPACY_MODEL = "de_core_news_lg"
 
+# Only the parser (which sets sentence boundaries) and its tok2vec are
+# needed; the tagging/lemmatizing/NER components are excluded for speed
+# since the LLM stage replaces them.
+EXCLUDED_PIPES = ("tagger", "morphologizer", "lemmatizer", "attribute_ruler", "ner")
+
 # nlp() memory grows with document size, so the text is chunked at segment
 # boundaries: Whisper segments end at pauses and book segments at paragraph
 # ends, so sentences are not cut mid-chunk the way a fixed character split
@@ -27,27 +36,11 @@ DEFAULT_SPACY_MODEL = "de_core_news_lg"
 MAX_CHUNK_CHARS = 40_000
 
 
-@dataclass(frozen=True)
-class TokenRecord:
-    text: str
-    lemma: str
-    pos: str
-    ent_type: str
-    is_alpha: bool
-    is_stop: bool
-
-
-@dataclass(frozen=True)
-class SentenceRecord:
-    text: str
-    tokens: tuple[TokenRecord, ...]
-
-
 def load_nlp(model_name: str = DEFAULT_SPACY_MODEL):
     import spacy
 
     try:
-        return spacy.load(model_name)
+        return spacy.load(model_name, exclude=list(EXCLUDED_PIPES))
     except OSError as exc:
         raise SystemExit(
             f"spaCy model {model_name!r} is not installed.\n"
@@ -55,26 +48,14 @@ def load_nlp(model_name: str = DEFAULT_SPACY_MODEL):
         ) from exc
 
 
-def doc_to_sentences(doc) -> list[SentenceRecord]:
-    """Convert a spaCy Doc into plain records. Pure conversion — testable
-    with fake doc objects."""
+def doc_to_sentences(doc) -> list[str]:
+    """Whitespace-normalized sentence strings of a spaCy Doc. Pure
+    conversion — testable with fake doc objects."""
     sentences = []
     for sent in doc.sents:
         text = " ".join(sent.text.split())
-        if not text:
-            continue
-        tokens = tuple(
-            TokenRecord(
-                text=tok.text,
-                lemma=tok.lemma_,
-                pos=tok.pos_,
-                ent_type=tok.ent_type_,
-                is_alpha=tok.is_alpha,
-                is_stop=tok.is_stop,
-            )
-            for tok in sent
-        )
-        sentences.append(SentenceRecord(text=text, tokens=tokens))
+        if text:
+            sentences.append(text)
     return sentences
 
 
@@ -98,25 +79,19 @@ def chunk_segments(segment_texts: list[str], max_chars: int = MAX_CHUNK_CHARS) -
     return chunks
 
 
-def sentences_from_payload(payload: dict, source: Path | str = "analysis") -> list[SentenceRecord]:
-    """Rebuild records from an analysis.json payload."""
+def sentences_from_payload(payload: dict, source: Path | str = "sentences") -> list[str]:
+    """Rebuild the sentence list from a sentences.json payload."""
     sentences = require_list(payload, "sentences", Path(source))
-    try:
-        return [
-            SentenceRecord(
-                text=sent["text"],
-                tokens=tuple(TokenRecord(**tok) for tok in sent["tokens"]),
+    for sent in sentences:
+        if not isinstance(sent, str):
+            raise ValueError(
+                f"{source}: malformed sentence record ({sent!r} is not a string); "
+                f"re-run the sentences stage with --force."
             )
-            for sent in sentences
-        ]
-    except (KeyError, TypeError) as exc:
-        raise ValueError(
-            f"{source}: malformed sentence record ({type(exc).__name__}: {exc}); "
-            f"re-run the analyze stage with --force."
-        ) from exc
+    return sentences
 
 
-def analyze(
+def split_sentences(
     transcript_path: Path,
     output: Path,
     *,
@@ -142,13 +117,13 @@ def analyze(
             f"{transcript_path} contains no text to analyze ({len(segments)} "
             f"segment(s), all empty)."
         )
-    log.info("Analyzing %d chunk(s) with %s ...", len(chunks), model_name)
+    log.info("Splitting %d chunk(s) into sentences with %s ...", len(chunks), model_name)
 
     nlp = load_nlp(model_name)
-    sentences: list[SentenceRecord] = []
+    sentences: list[str] = []
     for doc in nlp.pipe(chunks):
         sentences.extend(doc_to_sentences(doc))
-    log.info("Found %d sentences", len(sentences))
+    log.info("Found %d sentences (%d distinct)", len(sentences), len(set(sentences)))
 
     import spacy
 
@@ -157,10 +132,8 @@ def analyze(
         "spacy_model": model_name,
         "spacy_version": spacy.__version__,
         "source": str(transcript_path),
-        "sentences": [
-            {"text": sent.text, "tokens": [asdict(tok) for tok in sent.tokens]}
-            for sent in sentences
-        ],
+        "total_sentences": len(sentences),
+        "sentences": sentences,
     }
     save_json(output, payload)
     return payload

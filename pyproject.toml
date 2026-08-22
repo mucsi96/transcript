@@ -13,6 +13,7 @@ dependencies = [
     "faster-whisper>=1.1,<2",
     "spacy>=3.8,<3.9",
     "httpx>=0.27,<1",
+    "openai>=1.60,<3",
     "python-dotenv>=1,<2",
 ]
 

@@ -17,7 +17,7 @@ The entries are flash-card headwords, not bare lemmas, so they arrive in the
 notation a vocabulary list uses: "der Kaffee" for a noun with its gender,
 "ausruhen (sich)" or "sich kümmern" for a reflexive verb, "gern(e)" for an
 optional ending, "auf jeden/keinen Fall" for alternatives, "all-" for an
-inflecting stem. spaCy lemmatizes the text to "Kaffee", "ausruhen", "gern" —
+inflecting stem. The LLM stage reduces the text to "Kaffee", "ausruhen", "gern" —
 so each entry is expanded into every form a lemma could take (see
 match_keys), and lemmas are compared against those keys. Comparing against
 the raw entry is what used to let a known "der Kaffee" show up in words.json

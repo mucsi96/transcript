@@ -7,7 +7,7 @@ order; the navigation document, the NCX table of contents and images are
 skipped.
 
 The output artifact has the same shape the transcribe stage produces — a
-list of text segments — so `analyze` and `build` treat a book exactly like a
+list of text segments — so the later stages treat a book exactly like a
 film. A segment is a paragraph here and a Whisper segment there: both are
 small units that end on a sentence boundary, which is what the spaCy chunker
 wants.
@@ -48,7 +48,7 @@ BLOCK_TAGS = frozenset({
 SKIP_TAGS = frozenset({"head", "script", "style", "svg"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-# spaCy's memory use grows with document length; the analyze stage joins
+# spaCy's memory use grows with document length; the sentences stage joins
 # segments into chunks but never splits one, so oversized paragraphs are
 # split here. Badly converted EPUBs sometimes put a whole chapter in a
 # single <div> without any <p>.

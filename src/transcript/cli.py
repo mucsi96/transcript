@@ -3,8 +3,8 @@
 Subcommands mirror the pipeline stages; each reads/writes a JSON artifact in
 the work directory and skips itself if its output already exists (--force to
 redo). `run` chains the text stage (transcribe for audio, epub for a book)
--> analyze -> build; it picks the first stage from the source's suffix. DVD
-ripping stays a separate step since it needs the physical disc.
+-> sentences -> words -> build; it picks the first stage from the source's
+suffix. DVD ripping stays a separate step since it needs the physical disc.
 """
 
 from __future__ import annotations
@@ -14,8 +14,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-
-from .config import DEFAULT_EXCLUDE_ENT_TYPES, DEFAULT_EXCLUDE_POS, FilterConfig
 
 
 def _add_extract(sub: argparse._SubParsersAction) -> None:
@@ -69,21 +67,44 @@ def _add_transcribe_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--no-vad", action="store_true", help="disable voice-activity-detection filtering")
 
 
-def _add_analyze(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("analyze", help="Sentence-split, lemmatize and tag the transcript with spaCy")
+def _add_sentences(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser("sentences", help="Split the transcript into sentences with spaCy")
     p.add_argument("transcript", type=Path)
-    p.add_argument("-o", "--output", type=Path, default=Path("work/analysis.json"))
-    _add_analyze_opts(p)
+    p.add_argument("-o", "--output", type=Path, default=Path("work/sentences.json"))
+    _add_sentences_opts(p)
 
 
-def _add_analyze_opts(p: argparse.ArgumentParser) -> None:
+def _add_sentences_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--spacy-model", default="de_core_news_lg",
                    help="German spaCy model (default: de_core_news_lg; de_core_news_md is lighter)")
 
 
+def _add_words(sub: argparse._SubParsersAction) -> None:
+    p = sub.add_parser(
+        "words",
+        help="Extract the dictionary-form words of each sentence with an OpenAI model",
+    )
+    p.add_argument("sentences", type=Path)
+    p.add_argument("-o", "--output", type=Path, default=Path("work/sentence-words.json"))
+    _add_words_opts(p)
+
+
+def _add_words_opts(p: argparse.ArgumentParser) -> None:
+    from .llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+
+    p.add_argument("--llm-model", default=DEFAULT_LLM_MODEL,
+                   help=f"OpenAI model for word extraction (default: {DEFAULT_LLM_MODEL})")
+    p.add_argument("--llm-rpm", type=int, default=DEFAULT_RPM, metavar="N",
+                   help=f"client-side request-per-minute cap, matched to your "
+                        f"API tier's rate limit (default: {DEFAULT_RPM})")
+    p.add_argument("--llm-concurrency", type=int, default=DEFAULT_CONCURRENCY, metavar="N",
+                   help=f"how many LLM requests to run in parallel "
+                        f"(default: {DEFAULT_CONCURRENCY})")
+
+
 def _add_build(sub: argparse._SubParsersAction) -> None:
-    p = sub.add_parser("build", help="Build the words-to-learn JSON from the analysis")
-    p.add_argument("analysis", type=Path)
+    p = sub.add_parser("build", help="Build the words-to-learn JSON from the extracted words")
+    p.add_argument("sentence_words", type=Path)
     p.add_argument("-o", "--output", type=Path, default=Path("work/words.json"))
     _add_build_opts(p)
 
@@ -91,19 +112,6 @@ def _add_build(sub: argparse._SubParsersAction) -> None:
 def _add_build_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--min-count", type=int, default=1,
                    help="drop words appearing fewer times than this (default: 1)")
-    p.add_argument("--min-token-len", type=int, default=2)
-    p.add_argument("--keep-pos", action="append", default=[], metavar="POS",
-                   help="POS tag to keep despite the default exclusions "
-                        "(e.g. NUM, or PRON/DET and the other function classes); repeatable")
-    p.add_argument("--drop-pos", action="append", default=[], metavar="POS",
-                   help="additional POS tag to exclude; repeatable")
-    p.add_argument("--keep-ent", action="append", default=[], metavar="ENT",
-                   help="entity type to keep (default excluded: PER LOC ORG); repeatable")
-    p.add_argument("--drop-ent", action="append", default=[], metavar="ENT",
-                   help="additional entity type to exclude (e.g. MISC); repeatable")
-    p.add_argument("--keep-stopwords", action="store_true",
-                   help="keep very common words spaCy marks as stopwords "
-                        "(so/schon/machen/gut ...); they are dropped by default")
     p.add_argument("--known-words-output", type=Path, metavar="PATH",
                    help="where to save the fetched known-words list "
                         "(default: known-words.json next to the words output)")
@@ -112,13 +120,14 @@ def _add_build_opts(p: argparse.ArgumentParser) -> None:
 def _add_run(sub: argparse._SubParsersAction) -> None:
     p = sub.add_parser(
         "run",
-        help="Run transcribe/epub -> analyze -> build from an audio file or an EPUB",
+        help="Run transcribe/epub -> sentences -> words -> build from an audio file or an EPUB",
     )
     p.add_argument("source", type=Path, help="audio file, or a .epub book")
     p.add_argument("--workdir", type=Path, default=Path("work"))
     _add_epub_opts(p)
     _add_transcribe_opts(p)
-    _add_analyze_opts(p)
+    _add_sentences_opts(p)
+    _add_words_opts(p)
     _add_build_opts(p)
 
 
@@ -133,7 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_extract(sub)
     _add_epub(sub)
     _add_transcribe(sub)
-    _add_analyze(sub)
+    _add_sentences(sub)
+    _add_words(sub)
     _add_build(sub)
     _add_run(sub)
     return parser
@@ -141,18 +151,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def is_epub(source: Path) -> bool:
     return Path(source).suffix.lower() == ".epub"
-
-
-def filter_config_from_args(args: argparse.Namespace) -> FilterConfig:
-    exclude_pos = (DEFAULT_EXCLUDE_POS | set(args.drop_pos)) - set(args.keep_pos)
-    exclude_ent = (DEFAULT_EXCLUDE_ENT_TYPES | set(args.drop_ent)) - set(args.keep_ent)
-    return FilterConfig(
-        exclude_pos=frozenset(exclude_pos),
-        exclude_ent_types=frozenset(exclude_ent),
-        min_token_len=args.min_token_len,
-        drop_stopwords=not args.keep_stopwords,
-        min_count=args.min_count,
-    )
 
 
 def _cmd_extract(args: argparse.Namespace) -> None:
@@ -215,15 +213,27 @@ def _cmd_text(args: argparse.Namespace, source: Path, output: Path) -> None:
         _cmd_transcribe(args, source, output)
 
 
-def _cmd_analyze(args: argparse.Namespace, transcript: Path, output: Path) -> None:
-    from .analyze import analyze
+def _cmd_sentences(args: argparse.Namespace, transcript: Path, output: Path) -> None:
+    from .sentences import split_sentences
 
-    analyze(transcript, output, model_name=args.spacy_model, force=args.force)
+    split_sentences(transcript, output, model_name=args.spacy_model, force=args.force)
 
 
-def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
+def _cmd_words(args: argparse.Namespace, sentences: Path, output: Path) -> None:
+    from .llm import extract_words
+
+    extract_words(
+        sentences,
+        output,
+        model=args.llm_model,
+        rpm=args.llm_rpm,
+        concurrency=args.llm_concurrency,
+        force=args.force,
+    )
+
+
+def _cmd_build(args: argparse.Namespace, sentence_words: Path, output: Path) -> None:
     from .aggregate import build_word_list, write_output
-    from .analyze import sentences_from_payload
     from .artifacts import load_json
     from .known_words import (
         ARTIFACT_NAME,
@@ -233,13 +243,14 @@ def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
         fetch_known_words,
         save_known_words,
     )
+    from .llm import sentence_words_from_payload
 
     log = logging.getLogger(__name__)
-    cfg = filter_config_from_args(args)
-    # Read the analysis before the network call: a missing or corrupt
+    # Read the extracted words before the network call: a missing or corrupt
     # artifact is certain and cheap to detect, and reporting it first keeps
     # an unrelated API failure from masking it.
-    sentences = sentences_from_payload(load_json(analysis), analysis)
+    payload = load_json(sentence_words)
+    sentences = sentence_words_from_payload(payload, sentence_words)
 
     url = os.environ.get(URL_ENV_VAR)
     token = os.environ.get(TOKEN_ENV_VAR)
@@ -266,8 +277,16 @@ def _cmd_build(args: argparse.Namespace, analysis: Path, output: Path) -> None:
             "every word of the source", URL_ENV_VAR,
         )
 
-    entries = build_word_list(sentences, known, cfg, verbose=args.verbose)
-    write_output(entries, output, known_words_source=url, cfg=cfg)
+    entries = build_word_list(
+        sentences, known, min_count=args.min_count, verbose=args.verbose
+    )
+    write_output(
+        entries,
+        output,
+        known_words_source=url,
+        llm_model=payload.get("llm_model"),
+        min_count=args.min_count,
+    )
     log.info("Wrote %d words to learn -> %s", len(entries), output)
 
 
@@ -313,18 +332,22 @@ def main(argv: list[str] | None = None) -> int:
             _cmd_epub(args, args.source, args.output)
         elif args.command == "transcribe":
             _cmd_transcribe(args, args.audio, args.output)
-        elif args.command == "analyze":
-            _cmd_analyze(args, args.transcript, args.output)
+        elif args.command == "sentences":
+            _cmd_sentences(args, args.transcript, args.output)
+        elif args.command == "words":
+            _cmd_words(args, args.sentences, args.output)
         elif args.command == "build":
-            _cmd_build(args, args.analysis, args.output)
+            _cmd_build(args, args.sentence_words, args.output)
         elif args.command == "run":
             workdir: Path = args.workdir
             transcript_json = workdir / "transcript.json"
-            analysis_json = workdir / "analysis.json"
+            sentences_json = workdir / "sentences.json"
+            sentence_words_json = workdir / "sentence-words.json"
             words_json = workdir / "words.json"
             _cmd_text(args, args.source, transcript_json)
-            _cmd_analyze(args, transcript_json, analysis_json)
-            _cmd_build(args, analysis_json, words_json)
+            _cmd_sentences(args, transcript_json, sentences_json)
+            _cmd_words(args, sentences_json, sentence_words_json)
+            _cmd_build(args, sentence_words_json, words_json)
     except KeyboardInterrupt:
         # Stages write their artifact atomically, so a cached one is either
         # complete or absent; re-running resumes at the interrupted stage.

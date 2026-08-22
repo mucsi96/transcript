@@ -246,8 +246,8 @@ def test_extract_text_payload(book, tmp_path):
     }
 
 
-def test_extract_text_feeds_the_analyze_stage(book, tmp_path):
-    from transcript.analyze import chunk_segments
+def test_extract_text_feeds_the_sentences_stage(book, tmp_path):
+    from transcript.sentences import chunk_segments
     from transcript.artifacts import load_json
 
     payload = extract_text(book, tmp_path / "transcript.json")

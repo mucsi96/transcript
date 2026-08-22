@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from transcript.cli import build_parser, filter_config_from_args, format_error, is_epub
+from transcript.cli import build_parser, format_error, is_epub
 from transcript.extract import build_ffmpeg_command, format_tracks, parse_ffprobe_streams
 from transcript.known_words import KnownWordsError
 
@@ -68,43 +68,60 @@ def test_transcribe_defaults():
 
 
 def test_known_words_output_defaults_to_beside_the_word_list():
-    assert parse("build", "analysis.json").known_words_output is None
-    args = parse("build", "analysis.json", "--known-words-output", "w/fetched.json")
+    assert parse("build", "sentence-words.json").known_words_output is None
+    args = parse("build", "sentence-words.json", "--known-words-output", "w/fetched.json")
     assert args.known_words_output == Path("w/fetched.json")
     assert parse("run", "buch.epub").known_words_output is None
 
 
-def test_build_filter_defaults_drop_function_words_and_stopwords():
-    cfg = filter_config_from_args(parse("build", "analysis.json"))
-    assert {"DET", "PRON", "ADP", "AUX", "CCONJ", "SCONJ", "PART"} <= cfg.exclude_pos
-    assert cfg.drop_stopwords
+def test_sentences_defaults():
+    args = parse("sentences", "work/transcript.json")
+    assert args.command == "sentences"
+    assert args.transcript == Path("work/transcript.json")
+    assert args.output == Path("work/sentences.json")
+    assert args.spacy_model == "de_core_news_lg"
 
 
-def test_build_filter_config_overrides():
+def test_words_defaults():
+    from transcript.llm import DEFAULT_CONCURRENCY, DEFAULT_LLM_MODEL, DEFAULT_RPM
+
+    args = parse("words", "work/sentences.json")
+    assert args.command == "words"
+    assert args.sentences == Path("work/sentences.json")
+    assert args.output == Path("work/sentence-words.json")
+    assert args.llm_model == DEFAULT_LLM_MODEL
+    assert args.llm_rpm == DEFAULT_RPM
+    assert args.llm_concurrency == DEFAULT_CONCURRENCY
+
+
+def test_words_rate_limit_options():
     args = parse(
-        "build", "analysis.json",
-        "--keep-pos", "NUM", "--keep-pos", "PRON", "--drop-ent", "MISC",
-        "--keep-stopwords", "--min-count", "2",
+        "words", "work/sentences.json",
+        "--llm-model", "gpt-5", "--llm-rpm", "30", "--llm-concurrency", "4",
     )
-    cfg = filter_config_from_args(args)
-    assert "NUM" not in cfg.exclude_pos
-    assert "PRON" not in cfg.exclude_pos
-    assert "PROPN" in cfg.exclude_pos
-    assert "MISC" in cfg.exclude_ent_types
-    assert not cfg.drop_stopwords
-    assert cfg.min_count == 2
+    assert args.llm_model == "gpt-5"
+    assert args.llm_rpm == 30
+    assert args.llm_concurrency == 4
+
+
+def test_build_min_count():
+    assert parse("build", "sentence-words.json").min_count == 1
+    assert parse("build", "sentence-words.json", "--min-count", "2").min_count == 2
 
 
 def test_run_accepts_all_stage_options():
     args = parse(
         "run", "movie.flac", "--workdir", "w",
         "--device", "cpu", "--spacy-model", "de_core_news_md",
+        "--llm-model", "gpt-5", "--llm-rpm", "30",
         "--min-count", "2",
     )
     assert args.source == Path("movie.flac")
     assert args.workdir == Path("w")
     assert args.device == "cpu"
     assert args.spacy_model == "de_core_news_md"
+    assert args.llm_model == "gpt-5"
+    assert args.llm_rpm == 30
     assert args.min_count == 2
 
 

@@ -299,17 +299,17 @@ def test_saved_artifact_lists_the_normalized_words_sorted(tmp_path):
 def test_build_saves_the_fetched_words_next_to_the_word_list(tmp_path, monkeypatch):
     from transcript.cli import _cmd_build, build_parser
 
-    analysis = tmp_path / "analysis.json"
-    analysis.write_text(
+    sentence_words = tmp_path / "sentence-words.json"
+    sentence_words.write_text(
         json.dumps({
             "schema_version": 1,
+            "llm_model": "test-model",
             "sentences": [{
                 "text": "Der Hund bellt.",
-                "tokens": [
-                    {"text": "Hund", "lemma": "Hund", "pos": "NOUN",
-                     "ent_type": "", "is_alpha": True, "is_stop": False},
-                    {"text": "bellt", "lemma": "bellen", "pos": "VERB",
-                     "ent_type": "", "is_alpha": True, "is_stop": False},
+                "count": 1,
+                "words": [
+                    {"lemma": "Hund", "word_type": "noun", "article": "der"},
+                    {"lemma": "bellen", "word_type": "verb", "article": None},
                 ],
             }],
         }),
@@ -324,8 +324,8 @@ def test_build_saves_the_fetched_words_next_to_the_word_list(tmp_path, monkeypat
     monkeypatch.setenv(TOKEN_ENV_VAR, "sekrit")
 
     words_json = tmp_path / "out" / "words.json"
-    args = build_parser().parse_args(["build", str(analysis), "-o", str(words_json)])
-    _cmd_build(args, analysis, words_json)
+    args = build_parser().parse_args(["build", str(sentence_words), "-o", str(words_json)])
+    _cmd_build(args, sentence_words, words_json)
 
     saved = json.loads((words_json.parent / ARTIFACT_NAME).read_text(encoding="utf-8"))
     assert saved["words"] == ["der hund", "strasse"]
@@ -338,8 +338,8 @@ def test_build_saves_the_fetched_words_next_to_the_word_list(tmp_path, monkeypat
 def test_build_writes_the_artifact_where_asked(tmp_path, monkeypatch):
     from transcript.cli import _cmd_build, build_parser
 
-    analysis = tmp_path / "analysis.json"
-    analysis.write_text(
+    sentence_words = tmp_path / "sentence-words.json"
+    sentence_words.write_text(
         json.dumps({"schema_version": 1, "sentences": []}), encoding="utf-8"
     )
     monkeypatch.setitem(
@@ -352,10 +352,10 @@ def test_build_writes_the_artifact_where_asked(tmp_path, monkeypatch):
     elsewhere = tmp_path / "reference" / "fetched.json"
     words_json = tmp_path / "words.json"
     args = build_parser().parse_args([
-        "build", str(analysis), "-o", str(words_json),
+        "build", str(sentence_words), "-o", str(words_json),
         "--known-words-output", str(elsewhere),
     ])
-    _cmd_build(args, analysis, words_json)
+    _cmd_build(args, sentence_words, words_json)
 
     assert json.loads(elsewhere.read_text(encoding="utf-8"))["words"] == ["haus"]
     assert not (tmp_path / ARTIFACT_NAME).exists()
@@ -364,15 +364,15 @@ def test_build_writes_the_artifact_where_asked(tmp_path, monkeypatch):
 def test_build_without_an_endpoint_writes_no_artifact(tmp_path, monkeypatch):
     from transcript.cli import _cmd_build, build_parser
 
-    analysis = tmp_path / "analysis.json"
-    analysis.write_text(
+    sentence_words = tmp_path / "sentence-words.json"
+    sentence_words.write_text(
         json.dumps({"schema_version": 1, "sentences": []}), encoding="utf-8"
     )
     monkeypatch.delenv(URL_ENV_VAR, raising=False)
 
     words_json = tmp_path / "words.json"
-    args = build_parser().parse_args(["build", str(analysis), "-o", str(words_json)])
-    _cmd_build(args, analysis, words_json)
+    args = build_parser().parse_args(["build", str(sentence_words), "-o", str(words_json)])
+    _cmd_build(args, sentence_words, words_json)
 
     assert not (tmp_path / ARTIFACT_NAME).exists()
 
