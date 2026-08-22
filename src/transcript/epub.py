@@ -7,10 +7,9 @@ order; the navigation document, the NCX table of contents and images are
 skipped.
 
 The output artifact has the same shape the transcribe stage produces — a
-list of text segments — so `analyze` and `build` treat a book exactly like a
+list of text segments — so the later stages treat a book exactly like a
 film. A segment is a paragraph here and a Whisper segment there: both are
-small units that end on a sentence boundary, which is what the spaCy chunker
-wants.
+small units the sentences stage joins and splits into sentences.
 
 Only DRM-free EPUBs can be read; encrypted ones are reported as such.
 """
@@ -48,10 +47,9 @@ BLOCK_TAGS = frozenset({
 SKIP_TAGS = frozenset({"head", "script", "style", "svg"})
 HEADING_TAGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 
-# spaCy's memory use grows with document length; the analyze stage joins
-# segments into chunks but never splits one, so oversized paragraphs are
-# split here. Badly converted EPUBs sometimes put a whole chapter in a
-# single <div> without any <p>.
+# Badly converted EPUBs sometimes put a whole chapter in a single <div>
+# without any <p>; keep segments bounded so the text artifact stays
+# inspectable.
 MAX_SEGMENT_CHARS = 20_000
 
 _XML_ENCODING = re.compile(rb"""^<\?xml[^>]*?encoding=["']([\w.-]+)["']""", re.IGNORECASE)

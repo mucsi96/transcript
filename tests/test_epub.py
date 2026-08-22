@@ -246,15 +246,15 @@ def test_extract_text_payload(book, tmp_path):
     }
 
 
-def test_extract_text_feeds_the_analyze_stage(book, tmp_path):
-    from transcript.analyze import chunk_segments
+def test_extract_text_feeds_the_sentences_stage(book, tmp_path):
+    from transcript.sentences import join_segments
     from transcript.artifacts import load_json
 
     payload = extract_text(book, tmp_path / "transcript.json")
     reloaded = load_json(tmp_path / "transcript.json")
     assert reloaded == payload
-    chunks = chunk_segments([seg["text"] for seg in reloaded["segments"]])
-    assert "Josef K." in chunks[0]
+    text = join_segments([seg["text"] for seg in reloaded["segments"]])
+    assert "Josef K." in text
 
 
 def test_extract_text_segments_stay_within_the_chunk_limit(tmp_path):

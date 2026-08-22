@@ -1,5 +1,5 @@
 {
-  description = "German vocabulary extraction pipeline for DVDs and EPUBs (MakeMKV/ffmpeg -> faster-whisper -> spaCy)";
+  description = "German vocabulary extraction pipeline for DVDs and EPUBs (MakeMKV/ffmpeg -> faster-whisper -> LLM)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
@@ -15,8 +15,7 @@
       {
         # Hybrid setup: Nix provides the system dependencies (Python,
         # ffmpeg); the Python dependencies live in a pip venv because
-        # faster-whisper and the spaCy German models don't package cleanly
-        # in nixpkgs.
+        # faster-whisper doesn't package cleanly in nixpkgs.
         devShells.default = pkgs.mkShell ({
           packages = [
             python
@@ -32,10 +31,6 @@
             if ! python -m pip show transcript >/dev/null 2>&1; then
               echo "Installing Python dependencies (first run only) ..."
               python -m pip install -e ".[dev]"
-            fi
-            if ! python -c "import de_core_news_lg" >/dev/null 2>&1; then
-              echo "Downloading spaCy model de_core_news_lg (~570 MB, first run only) ..."
-              python -m spacy download de_core_news_lg
             fi
 
             # GPU on WSL2: the Windows NVIDIA driver exposes the GPU as

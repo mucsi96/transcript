@@ -11,13 +11,21 @@ DVD ──[MakeMKV on Windows]────────> movie.mkv              (
     ──[transcribe: faster-whisper]─┐
                                    ├> work/transcript.json (text segments + metadata)
 EPUB ─[epub: spine -> paragraphs]──┘
-    ──[analyze: spaCy]─────────────> work/analysis.json    (sentences, lemmas, POS, NER)
-    ──[build: match + filter]──────┬> work/known-words.json(what the API answered, for reference)
-                                   └> work/words.json      (words to learn + example sentences)
+    ──[sentences: syntok]──────────> work/sentences.json      (every sentence of the source)
+    ──[words: OpenAI, per sentence]> work/sentence-words.json (dictionary-form words per sentence)
+    ──[build: match + aggregate]───┬> work/known-words.json   (what the API answered, for reference)
+                                   └> work/words.json         (words to learn + example sentences)
 ```
 
 A book skips the ripping and transcribing stages: `epub` writes the same text
-artifact Whisper produces, so `analyze` and `build` are shared.
+artifact Whisper produces, so `sentences`, `words` and `build` are shared.
+
+Word extraction is done by an LLM that sees one whole sentence at a time,
+because German separable verbs make per-token analysis wrong: in "Er fängt
+gerade an" the word to learn is "anfangen", which only something that reads
+the sentence can put back together from "fängt ... an". The rules for which
+words to ignore (names, numbers, function words, fillers) are part of the
+prompt.
 
 Every stage skips itself if its output already exists; pass `--force` to
 regenerate.
@@ -29,17 +37,16 @@ nix develop
 ```
 
 That is all: the dev shell provides Python 3.11 and ffmpeg, then on first
-entry creates a `.venv`, runs `pip install -e ".[dev]"` (faster-whisper,
-spaCy, pytest), and downloads the `de_core_news_lg` German spaCy model
-(~570 MB). Later entries just activate the existing venv. Nix provides the
-system pieces; Python packages stay in the venv because faster-whisper and
-the spaCy German models don't package cleanly in nixpkgs.
+entry creates a `.venv` and runs `pip install -e ".[dev]"` (faster-whisper,
+syntok, openai, pytest). Later entries just activate the existing venv. Nix
+provides the system pieces; Python packages stay in the venv because
+faster-whisper doesn't package cleanly in nixpkgs.
 
 On the Windows side you need [MakeMKV](https://www.makemkv.com/) for the
 DVD rip itself.
 
 Without Nix: install ffmpeg and Python ≥ 3.10 yourself, then in a venv run
-`pip install -e ".[dev]"` and `python -m spacy download de_core_news_lg`.
+`pip install -e ".[dev]"`.
 
 The first `transcribe` run downloads the Whisper large-v3 model (~3 GB) into
 `~/.cache/huggingface`.
@@ -126,9 +133,8 @@ transcript epub ~/books/buch.epub -o work/transcript.json
 
 Only the spine's XHTML documents are read, in reading order; the navigation
 document, the NCX table of contents, images, `<script>` and `<style>` are
-skipped. One segment is one paragraph, so the spaCy chunker gets the same
-sentence-aligned units it gets from Whisper. Chapter titles come from each
-document's first heading.
+skipped. One segment is one paragraph, the same shape the Whisper stage
+produces. Chapter titles come from each document's first heading.
 
 Options:
 
@@ -145,17 +151,73 @@ Only DRM-free EPUBs can be read — a file with an Adobe/FairPlay
 into gibberish. `.mobi`/`.azw` are not supported; convert them to EPUB with
 [Calibre](https://calibre-ebook.com/) first.
 
-## Stages 2–4 — audio or text → word list
+## Stages 2–5 — audio or text → word list
 
 ```bash
 # individually
 transcript transcribe work/movie.flac -o work/transcript.json
-transcript analyze work/transcript.json -o work/analysis.json
-transcript build work/analysis.json -o work/words.json
+transcript sentences work/transcript.json -o work/sentences.json
+transcript words work/sentences.json -o work/sentence-words.json
+transcript build work/sentence-words.json -o work/words.json
 
 # or in one go — the first stage follows the source's suffix
 transcript run work/movie.flac --workdir work
 transcript run ~/books/buch.epub --workdir work --chapters 3-20
+```
+
+### Sentences (`work/sentences.json`)
+
+`sentences` splits the transcript into sentences with
+[syntok](https://github.com/fnl/syntok), a small pure-Python segmenter that
+knows German abbreviations ("z. B.", "Dr.", "usw.") — no ML model to
+download, since all token-level analysis lives in the LLM stage. Splits
+after an ordinal ("im 2. Stock", "am 24. Dezember") are folded back
+automatically. The full ordered list — duplicates included, a film repeats
+its lines — is written as an intermediary artifact: when a word in the
+final list looks wrong, this file is the place to check what the LLM was
+actually given.
+
+### LLM word extraction (`work/sentence-words.json`)
+
+`words` sends each **distinct** sentence to an OpenAI model once and asks
+for every word worth learning in its dictionary form: verbs as infinitives
+(separable verbs reunited), nouns in the nominative singular with their
+article, adjectives in the base form. The API key comes from `.env`:
+
+```bash
+OPENAI_API_KEY=sk-your-key
+```
+
+One call per sentence means thousands of calls per film, so the stage runs
+them concurrently while respecting the provider's rate limits:
+
+- `--llm-model NAME` — OpenAI model (default: `gpt-5-mini`).
+- `--llm-rpm N` — client-side requests-per-minute cap (default: 60). Match
+  it to your [API tier's rate limit](https://platform.openai.com/docs/guides/rate-limits);
+  the SDK's own retry-with-backoff still catches any 429 that slips through.
+- `--llm-concurrency N` — how many requests are in flight at once
+  (default: 8).
+
+Every finished sentence is appended to a `sentence-words.json.partial.jsonl`
+checkpoint, so an interrupted or failed run **resumes** where it stopped
+instead of paying for the finished sentences again; the checkpoint is folded
+into the artifact and deleted when the stage completes. The artifact keeps
+the per-sentence answers, so any entry in the final word list can be traced
+back to the exact sentence and model output:
+
+```json
+{
+  "schema_version": 1,
+  "llm_model": "gpt-5-mini",
+  "total_sentences": 1180,
+  "sentences": [
+    {
+      "text": "Er fängt gerade an.",
+      "count": 2,
+      "words": [{"lemma": "anfangen", "word_type": "verb", "article": null}]
+    }
+  ]
+}
 ```
 
 ### Known words
@@ -179,7 +241,7 @@ JSON response shapes:
 ```
 
 Entries are flash-card headwords, so the notation a vocabulary list uses is
-understood and expanded to the lemma forms spaCy produces:
+understood and expanded to the lemma forms the LLM produces:
 
 | Entry                    | also matches the lemma           |
 | ------------------------ | -------------------------------- |
@@ -242,13 +304,13 @@ The file is rewritten on every build, and is not written at all when
   "total_words": 412,
   "words": [
     {
-      "lemma": "laufen",
-      "pos": "VERB",
+      "lemma": "anfangen",
       "word_type": "verb",
+      "article": null,
       "count": 12,
       "sentences": [
-        "Der Hund läuft schnell.",
-        "Wir sind zum Bahnhof gelaufen."
+        "Er fängt gerade an.",
+        "Wir haben gestern angefangen."
       ]
     }
   ]
@@ -257,52 +319,40 @@ The file is rewritten on every build, and is not written at all when
 
 One entry per (lemma, word type), sorted by how often it occurs in the film
 or book, with every distinct sentence it appeared in — ready to turn into
-flash cards (front: lemma + word type, back: example sentences).
+flash cards (front: lemma + word type + article for nouns, back: example
+sentences). A sentence counts every time the source contains it, even though
+the LLM saw it only once.
 
 ## How "not worth learning" words are excluded
 
-On by default:
+The rules live in the LLM prompt (see `SYSTEM_PROMPT` in
+`src/transcript/llm.py`) — the model is asked to skip:
 
-- **Function words** — the closed classes: determiners (`DET`), pronouns
-  (`PRON`), prepositions (`ADP`), auxiliaries (`AUX`), conjunctions
-  (`CCONJ`/`SCONJ`) and particles (`PART`). "der", "sie", "auf", "sein",
-  "und" top every German frequency list and are learned as grammar, not as
-  flash cards. `--keep-pos PRON` (repeatable) puts a class back.
-- **Stopwords** — the same idea for the open classes, where a blanket POS
-  rule would throw away the words you actually want: spaCy's German stopword
-  list drops very common adverbs, verbs and adjectives like "so", "schon",
-  "machen", "gut", while leaving "plötzlich" or "erzählen" in.
-  `--keep-stopwords` turns it off. Note it also covers a handful of everyday
-  nouns ("Zeit", "Uhr", "Jahr", "Tag").
-- **Proper nouns** (`PROPN` POS tag) — person and place names are not
-  vocabulary.
-- **Named entities** tagged `PER`/`LOC`/`ORG` by spaCy's NER — catches names
-  the POS tagger missed (multi-word names, surnames tagged as nouns).
-  `MISC` entities are *kept*, because German NER files learnable nationality
-  adjectives like "deutsch" under MISC (`--drop-ent MISC` to exclude them).
-- Punctuation, symbols, whitespace, numerals (`--keep-pos NUM` if you want
-  "zwei" etc.), non-alphabetic tokens ("2:30"), single characters.
-- Your known words.
+- **Proper names** of people, places, brands and characters.
+- **Numbers, dates, punctuation, symbols.**
+- **Function words** that are learned as grammar, not vocabulary: articles,
+  pronouns, prepositions, conjunctions, question words, auxiliary/modal
+  verbs — including the separated prefix of a separable verb, which belongs
+  inside the verb's infinitive instead.
+- **Interjections and fillers** ("äh", "hm", "na", "hallo").
+- **Absolute beginner (A1) words** every learner meets in the first weeks
+  ("gut", "machen", "gehen").
+- Anything garbled or not German.
 
-Optional:
+After the LLM, `build` additionally drops:
 
-- `--min-count 2` — drop words heard only once; in a two-hour film these are
+- Your known words (see above).
+- `--min-count 2` — words heard only once; in a two-hour film these are
   often Whisper mis-transcriptions or too rare to matter. For a book, where
   the text is exact, `--min-count 1` (the default) is usually right.
 
-Ideas for further filtering (extension points, not implemented — see
-`src/transcript/filters.py`):
-
-- **Frequency filter**: `wordfreq.zipf_frequency(lemma, "de")` to drop
-  ultra-rare words (likely ASR errors) or rank cards most-frequent-first.
-- **LLM review pass**: send the candidate list to GPT-5 with "which of these
-  are worth a flash card for a B1 learner?" as a final polish.
-
 ## Known limitations
 
-- spaCy's German lemmatizer is statistical; separable verbs come apart:
-  "Er fängt an" yields the lemma `fangen` plus the particle `an`, not
-  `anfangen`. Occasional wrong lemmas are possible.
+- Word extraction quality is the LLM's judgement; a rule in the prompt is a
+  request, not a guarantee. The per-sentence answers stay inspectable in
+  `work/sentence-words.json` when something looks off.
+- One API call per distinct sentence costs real money on a large source;
+  `--llm-model` picks the trade-off between price and judgement.
 - Whisper can hallucinate short phrases during music or silence. The
   built-in VAD filter and disabled text conditioning suppress most of it;
   `--min-count 2` catches stragglers.
@@ -316,8 +366,8 @@ Ideas for further filtering (extension points, not implemented — see
 ## Development
 
 ```bash
-pytest          # unit tests; no DVD, EPUB, ffmpeg, Whisper model or spaCy model needed
+pytest          # unit tests; no DVD, EPUB, ffmpeg, Whisper model or API key needed
 ```
 
-The spaCy-dependent smoke test auto-skips when `de_core_news_lg` is not
-installed.
+The LLM stage is tested against a stub client, so the tests make no API
+calls and need no `OPENAI_API_KEY`.
